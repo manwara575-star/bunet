@@ -36,8 +36,8 @@ public sealed class SecurityHeadersMiddleware
 
         h["Content-Security-Policy"] =
             "default-src 'self'; " +
-            "script-src 'self'; " +
-            "style-src 'self' 'unsafe-inline'; " +
+            "script-src 'self' 'unsafe-inline'; " +
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
             "img-src 'self' data: https:; " +
             "font-src 'self' data:; " +
             "connect-src 'self' https://video.bunnycdn.com; " +
