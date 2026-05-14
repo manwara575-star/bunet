@@ -12,4 +12,4 @@ Dockerfile
 docker-compose.yml
 tools/
 src/VideoSecurity.Web/videosecurity.db*
-src/VideoSecurity.Web/wwwroot/lib/
+
