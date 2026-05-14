@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -20,7 +21,17 @@ var cookieSecurePolicy = builder.Configuration.GetValue<bool>("Hosting:AllowInse
     : CookieSecurePolicy.Always;
 
 builder.Services.AddVideoSecurityInfrastructure(builder.Configuration);
-builder.Services.AddDataProtection();
+
+var dpPath = builder.Configuration["DataProtection:Path"];
+if (!string.IsNullOrEmpty(dpPath))
+{
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(dpPath));
+}
+else
+{
+    builder.Services.AddDataProtection();
+}
 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(o =>
     {
