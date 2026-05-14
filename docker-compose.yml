@@ -8,6 +8,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
       Hosting__DisableHttpsRedirection: "true"
+      Hosting__AllowInsecureCookies: "true"
       ConnectionStrings__DefaultConnection: "Data Source=/data/videosecurity.db"
       Bunny__LibraryId: "${BUNNY_LIBRARY_ID:-0}"
       Bunny__ApiKey: "${BUNNY_API_KEY:-}"
