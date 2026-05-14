@@ -1,0 +1,23 @@
+@model IEnumerable<VideoSecurity.Domain.Entities.Video>
+@{ ViewData["Title"] = "My videos"; }
+
+<h1>My videos</h1>
+@if (!Model.Any())
+{
+    <p class="text-muted">No videos available. Ask an admin to grant access.</p>
+}
+<div class="row g-3">
+    @foreach (var v in Model)
+    {
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">@v.Title</h5>
+                    <p class="card-text text-muted">@v.Description</p>
+                    <small class="text-muted">@v.DurationSeconds.ToString("F0")s</small>
+                    <a href="/player/watch/@v.Id" class="btn btn-primary mt-2 w-100">Watch</a>
+                </div>
+            </div>
+        </div>
+    }
+</div>

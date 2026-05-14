@@ -1,0 +1,15 @@
+**/bin
+**/obj
+**/.vs
+**/.vscode
+**/node_modules
+tests/
+*.md
+.git
+.github
+.dockerignore
+Dockerfile
+docker-compose.yml
+tools/
+src/VideoSecurity.Web/videosecurity.db*
+src/VideoSecurity.Web/wwwroot/lib/

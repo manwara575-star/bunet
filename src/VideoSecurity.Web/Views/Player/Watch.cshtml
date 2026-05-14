@@ -1,0 +1,29 @@
+@{
+    ViewData["Title"] = (string)ViewBag.Title;
+    var videoId = (Guid)ViewBag.VideoId;
+}
+
+<link rel="stylesheet" href="~/css/player.css" asp-append-version="true" />
+
+@Html.AntiForgeryToken()
+
+<div id="player-root"
+    data-video-id="@videoId"
+    data-session-endpoint="/api/videos/@videoId/playback-session"
+    data-heartbeat-endpoint="/api/videos/heartbeat"
+    data-events-endpoint="/api/security/video-events">
+    <div id="player-shell" class="player-shell">
+        <div id="player-watermark" class="player-watermark" aria-hidden="true"></div>
+        <iframe id="player-frame"
+                title="Protected video player"
+                src="about:blank"
+                referrerpolicy="strict-origin-when-cross-origin"
+                allow="encrypted-media; autoplay"
+                sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>
+        <div id="player-status" class="player-status" role="status"></div>
+        <button type="button" id="btn-fullscreen" class="player-fs-btn" aria-label="Fullscreen">⛶</button>
+    </div>
+</div>
+
+<script src="~/js/player.js" asp-append-version="true"></script>
+<script src="~/js/watch-page.js" asp-append-version="true"></script>

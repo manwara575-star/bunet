@@ -1,0 +1,16 @@
+﻿@{
+    ViewData["Title"] = "Privacy Policy";
+}
+<h1>@ViewData["Title"]</h1>
+
+<p>
+    VideoSecurity records playback sessions, progress, entitlement grants, and security events
+    needed to protect paid or private video content. Raw IP addresses and user-agent strings are
+    not stored; they are converted to keyed HMAC hashes before persistence.
+</p>
+<p>
+    The visible watermark identifies the signed-in user and playback session so redistributed
+    recordings can be traced. Security telemetry may include visibility changes, focus loss,
+    heartbeat timing, and best-effort tamper signals. Old security events are pruned by the
+    background cleanup service after the configured retention window.
+</p>

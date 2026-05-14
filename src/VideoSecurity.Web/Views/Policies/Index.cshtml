@@ -1,0 +1,39 @@
+@model IEnumerable<VideoSecurity.Domain.Entities.VideoSecurityPolicy>
+@{ ViewData["Title"] = "Security policies"; }
+
+<h1>Security policies</h1>
+
+@if (TempData["PolicyMessage"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+
+<table class="table table-sm">
+    <thead>
+        <tr>
+            <th>Tier</th>
+            <th>Embed TTL (s)</th>
+            <th>Heartbeat (s)</th>
+            <th>Max sessions</th>
+            <th>Watermark</th>
+            <th>Revoke on tamper</th>
+            <th>Risk threshold</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var p in Model)
+    {
+        <tr>
+            <td><strong>@p.Tier</strong></td>
+            <td>@p.EmbedTtlSeconds</td>
+            <td>@p.HeartbeatIntervalSeconds</td>
+            <td>@p.MaxConcurrentSessions</td>
+            <td>@(p.RequireWatermark ? "Yes" : "No")</td>
+            <td>@(p.RevokeOnWatermarkTamper ? "Yes" : "No")</td>
+            <td>@p.AutoRevokeRiskThreshold</td>
+            <td><a class="btn btn-sm btn-outline-primary" asp-action="Edit" asp-route-id="@p.Id">Edit</a></td>
+        </tr>
+    }
+    </tbody>
+</table>

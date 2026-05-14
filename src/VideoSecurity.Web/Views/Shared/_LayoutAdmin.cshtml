@@ -1,0 +1,8 @@
+@{
+    Layout = "_Layout";
+}
+<partial name="_AdminNav" />
+@RenderBody()
+@section Scripts {
+    @await RenderSectionAsync("Scripts", required: false)
+}

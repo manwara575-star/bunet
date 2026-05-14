@@ -1,0 +1,5 @@
+@model VideoSecurity.Domain.Entities.Video
+@{ ViewData["Title"] = "Video not ready"; }
+<h1>Video not ready</h1>
+<p>This video is still processing on Bunny (status: @Model.Status). Please check back shortly.</p>
+<a asp-controller="Home" asp-action="Index">Back</a>

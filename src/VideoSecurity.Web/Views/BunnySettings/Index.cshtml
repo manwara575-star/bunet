@@ -1,0 +1,131 @@
+@model VideoSecurity.Web.Controllers.Admin.BunnySettingsController.BunnySettingsViewModel
+@{ ViewData["Title"] = "Bunny settings"; }
+
+<h1>Bunny settings</h1>
+
+@if (TempData["BunnySettingsMessage"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+
+@if (Model.ValidationFailures.Count == 0)
+{
+    <div class="alert alert-success">Bunny configuration is complete. New saves take effect immediately.</div>
+}
+else
+{
+    <div class="alert alert-danger">
+        <strong>Bunny configuration needs attention.</strong>
+        <ul class="mb-0">
+            @foreach (var failure in Model.ValidationFailures)
+            {
+                <li>@failure</li>
+            }
+        </ul>
+    </div>
+}
+
+<form method="post" action="/admin/bunny" class="vstack gap-3">
+    @Html.AntiForgeryToken()
+    <div asp-validation-summary="All" class="text-danger"></div>
+
+    <section>
+        <h2 class="h4">Stream library</h2>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label asp-for="LibraryId" class="form-label">Library ID</label>
+                <input asp-for="LibraryId" class="form-control" />
+            </div>
+            <div class="col-md-8">
+                <label asp-for="CdnHostname" class="form-label">CDN hostname</label>
+                <input asp-for="CdnHostname" class="form-control" placeholder="vz-xxxxx.your-cdn-host" />
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="h4">Secrets</h2>
+        <p class="text-muted mb-2">Secret fields are never displayed. Leave a field blank to keep the current value.</p>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label asp-for="ApiKey" class="form-label">API key @(Model.HasApiKey ? "(saved)" : "(missing)")</label>
+                <input asp-for="ApiKey" class="form-control" type="password" autocomplete="new-password" />
+            </div>
+            <div class="col-md-6">
+                <label asp-for="EmbedTokenKey" class="form-label">Embed token key @(Model.HasEmbedTokenKey ? "(saved)" : "(missing)")</label>
+                <input asp-for="EmbedTokenKey" class="form-control" type="password" autocomplete="new-password" />
+            </div>
+            <div class="col-md-6">
+                <label asp-for="CdnTokenKey" class="form-label">CDN token key @(Model.HasCdnTokenKey ? "(saved)" : "(optional)")</label>
+                <input asp-for="CdnTokenKey" class="form-control" type="password" autocomplete="new-password" />
+                <div class="form-check mt-1">
+                    <input asp-for="ClearCdnTokenKey" class="form-check-input" />
+                    <label asp-for="ClearCdnTokenKey" class="form-check-label">Clear saved CDN token key</label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label asp-for="WebhookSecret" class="form-label">Webhook secret @(Model.HasWebhookSecret ? "(saved)" : "(optional)")</label>
+                <input asp-for="WebhookSecret" class="form-control" type="password" autocomplete="new-password" />
+                <div class="form-check mt-1">
+                    <input asp-for="ClearWebhookSecret" class="form-check-input" />
+                    <label asp-for="ClearWebhookSecret" class="form-check-label">Clear saved webhook secret</label>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <label asp-for="PrivacyHashPepper" class="form-label">Privacy hash pepper @(Model.HasPrivacyHashPepper ? "(saved)" : "(recommended)")</label>
+                <input asp-for="PrivacyHashPepper" class="form-control" type="password" autocomplete="new-password" />
+                <div class="form-check mt-1">
+                    <input asp-for="ClearPrivacyHashPepper" class="form-check-input" />
+                    <label asp-for="ClearPrivacyHashPepper" class="form-check-label">Clear saved privacy hash pepper</label>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="h4">Endpoints and timeouts</h2>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label asp-for="ApiBaseUrl" class="form-label">API base URL</label>
+                <input asp-for="ApiBaseUrl" class="form-control" />
+            </div>
+            <div class="col-md-4">
+                <label asp-for="TusEndpoint" class="form-label">TUS endpoint</label>
+                <input asp-for="TusEndpoint" class="form-control" />
+            </div>
+            <div class="col-md-4">
+                <label asp-for="EmbedBaseUrl" class="form-label">Embed base URL</label>
+                <input asp-for="EmbedBaseUrl" class="form-control" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="DefaultSessionTtlMinutes" class="form-label">Playback TTL minutes</label>
+                <input asp-for="DefaultSessionTtlMinutes" class="form-control" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="DefaultUploadTtlMinutes" class="form-label">Upload TTL minutes</label>
+                <input asp-for="DefaultUploadTtlMinutes" class="form-control" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="AssumedUploadBytesPerSecond" class="form-label">Assumed upload B/s</label>
+                <input asp-for="AssumedUploadBytesPerSecond" class="form-control" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="WebhookEventDedupeWindowHours" class="form-label">Webhook dedupe hours</label>
+                <input asp-for="WebhookEventDedupeWindowHours" class="form-control" />
+            </div>
+        </div>
+        <div class="form-check mt-3">
+            <input asp-for="LockSessionToIp" class="form-check-input" />
+            <label asp-for="LockSessionToIp" class="form-check-label">Lock playback sessions to IP</label>
+        </div>
+    </section>
+
+    <div>
+        <button type="submit" class="btn btn-primary">Save Bunny settings</button>
+    </div>
+</form>
+
+@if (Model.UpdatedAt is not null)
+{
+    <p class="text-muted mt-3">Last saved @Model.UpdatedAt.Value.UtcDateTime.ToString("u") by @(Model.UpdatedByUserId ?? "unknown").</p>
+}

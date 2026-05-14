@@ -1,0 +1,92 @@
+@using VideoSecurity.Web.Controllers.Admin
+@model SupportController.SupportDashboardModel
+@{
+    ViewData["Title"] = "Support Dashboard";
+    Layout = "_LayoutAdmin";
+}
+
+<h2>Support Dashboard</h2>
+<p class="text-muted">Read-only view of user playback sessions and progress.</p>
+
+<form method="get" class="mb-3 d-flex gap-2">
+    <input type="text" name="userId" class="form-control" style="max-width:300px"
+           placeholder="Filter by User ID" value="@ViewData["FilteredUserId"]" />
+    <button class="btn btn-outline-primary" type="submit">Filter</button>
+    <a href="/admin/support" class="btn btn-outline-secondary">Clear</a>
+</form>
+
+<h4>Recent Playback Sessions</h4>
+@if (Model.Sessions.Count == 0)
+{
+    <p class="text-muted">No sessions found.</p>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-striped">
+            <thead>
+                <tr>
+                    <th>Session ID</th>
+                    <th>User ID</th>
+                    <th>Video ID</th>
+                    <th>Created</th>
+                    <th>Expires</th>
+                    <th>Revoked</th>
+                    <th>Risk</th>
+                    <th>Last Position</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var s in Model.Sessions)
+                {
+                    <tr class="@(s.Revoked ? "table-danger" : s.RiskScore > 60 ? "table-warning" : "")">
+                        <td><code>@s.SessionId.ToString("N")[..8]</code></td>
+                        <td><code>@s.UserId[..Math.Min(8, s.UserId.Length)]&hellip;</code></td>
+                        <td><code>@s.VideoId.ToString("N")[..8]</code></td>
+                        <td>@s.CreatedAt.ToString("u")</td>
+                        <td>@s.ExpiresAt.ToString("u")</td>
+                        <td>@(s.Revoked ? "Yes" : "No")</td>
+                        <td>@s.RiskScore</td>
+                        <td>@s.LastPosition.ToString("F1")s</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<h4 class="mt-4">Recent Video Progress</h4>
+@if (Model.Progress.Count == 0)
+{
+    <p class="text-muted">No progress records found.</p>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-striped">
+            <thead>
+                <tr>
+                    <th>User ID</th>
+                    <th>Video ID</th>
+                    <th>Last Position</th>
+                    <th>Furthest Position</th>
+                    <th>Completed</th>
+                    <th>Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in Model.Progress)
+                {
+                    <tr class="@(p.Completed ? "table-success" : "")">
+                        <td><code>@p.UserId[..Math.Min(8, p.UserId.Length)]&hellip;</code></td>
+                        <td><code>@p.VideoId.ToString("N")[..8]</code></td>
+                        <td>@p.LastPosition.ToString("F1")s</td>
+                        <td>@p.FurthestPosition.ToString("F1")s</td>
+                        <td>@(p.Completed ? "Yes" : "No")</td>
+                        <td>@p.UpdatedAt.ToString("u")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}

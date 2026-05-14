@@ -1,0 +1,30 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{json,yml,yaml,md}]
+indent_size = 2
+
+[*.{ps1,psm1}]
+indent_size = 4
+
+[*.cs]
+# IDE / style
+csharp_using_directive_placement = outside_namespace:warning
+csharp_prefer_braces = when_multiline:silent
+csharp_style_namespace_declarations = file_scoped:warning
+dotnet_diagnostic.CA1062.severity = none      # nullable annotations cover this
+dotnet_diagnostic.CA1822.severity = silent
+dotnet_diagnostic.CA2007.severity = none      # ConfigureAwait not needed in ASP.NET Core
+dotnet_diagnostic.CA1848.severity = none      # LoggerMessage perf — overkill here
+
+# EF migrations are generated with block-scoped namespaces; don't error on style.
+[**/Migrations/*.cs]
+dotnet_diagnostic.IDE0161.severity = none
+generated_code = true

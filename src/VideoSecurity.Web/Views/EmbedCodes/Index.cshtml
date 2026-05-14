@@ -1,0 +1,49 @@
+@{
+    ViewData["Title"] = "Embed Codes";
+    var videos = (List<VideoSecurity.Domain.Entities.Video>)ViewBag.Videos;
+}
+
+<partial name="_AdminNav" />
+
+<h2>Generate Embed Codes</h2>
+
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<p class="text-muted mb-3">
+    Select a video to generate a secure embed code you can place on external websites like
+    <strong>cifm.polytronx.com</strong>. All security features (watermark, heartbeat, risk scoring, DRM) remain active.
+</p>
+
+@if (!videos.Any())
+{
+    <div class="alert alert-info">No ready videos found. Upload and process a video first.</div>
+}
+else
+{
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var v in videos)
+        {
+            <tr>
+                <td>@v.Title</td>
+                <td><span class="badge bg-success">@v.Status</span></td>
+                <td>@v.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                <td>
+                    <a href="/admin/embed-codes/@v.Id" class="btn btn-sm btn-primary">Generate Embed Code</a>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}

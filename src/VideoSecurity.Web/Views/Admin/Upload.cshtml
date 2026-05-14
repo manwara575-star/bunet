@@ -1,0 +1,18 @@
+@{ ViewData["Title"] = "Upload video"; }
+
+<h1>Upload video</h1>
+
+<form id="meta-form" class="mb-3">
+    @Html.AntiForgeryToken()
+    <div class="mb-2"><label class="form-label">Title</label><input id="title" class="form-control" required /></div>
+    <div class="mb-2"><label class="form-label">Description</label><textarea id="description" class="form-control"></textarea></div>
+    <div class="mb-2"><label class="form-label">Course Id (optional)</label><input id="courseId" class="form-control" /></div>
+    <div class="mb-2"><label class="form-label">Collection Id (optional)</label><input id="collectionId" class="form-control" /></div>
+    <div class="mb-2"><label class="form-label">File</label><input id="file" type="file" accept="video/*" required /></div>
+    <button type="submit" class="btn btn-primary" id="btn-upload">Create + Upload</button>
+</form>
+
+<pre id="log" class="upload-log bg-dark text-light p-2"></pre>
+
+<script src="~/lib/tus/tus.min.js" asp-append-version="true"></script>
+<script src="~/js/admin-upload.js" asp-append-version="true"></script>

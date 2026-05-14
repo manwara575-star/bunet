@@ -1,0 +1,95 @@
+@{
+    ViewData["Title"] = "Embed Code";
+    var video = (VideoSecurity.Domain.Entities.Video)ViewBag.Video;
+    var permanentUrl = (string)ViewBag.PermanentUrl;
+    var timedUrl = (string)ViewBag.TimedUrl;
+    var permanentHtml = (string)ViewBag.PermanentHtml;
+    var timedHtml = (string)ViewBag.TimedHtml;
+    var publicBaseUrl = (string)ViewBag.PublicBaseUrl;
+}
+
+<partial name="_AdminNav" />
+
+<h2>Embed Code for: @video.Title</h2>
+<a href="/admin/embed-codes" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back to videos</a>
+
+<div class="alert alert-info">
+    <strong>Security layers active in embed:</strong>
+    Signed URL token &bull; Bunny DRM (MediaCage) &bull; Forensic watermark &bull; Tamper guard &bull;
+    Heartbeat monitoring &bull; Risk scoring &bull; Auto-revocation &bull; DevTools detection
+</div>
+
+@if (publicBaseUrl.Contains("localhost"))
+{
+    <div class="alert alert-warning">
+        <strong>⚠️ Public Base URL is localhost.</strong> For external embedding, configure
+        <code>Embed:PublicBaseUrl</code> in appsettings.json to your public domain
+        (e.g., <code>https://videosecurity.cifm.polytronx.com</code>), or set the environment variable
+        <code>Embed__PublicBaseUrl</code>.
+    </div>
+}
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header bg-success text-white">
+                <strong>🔗 Permanent Embed (Recommended)</strong>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">Link never expires. Each viewer gets a fresh 15-min playback session on load.</p>
+                <label class="form-label fw-bold">Embed URL:</label>
+                <div class="input-group mb-2">
+                    <input type="text" class="form-control form-control-sm" value="@permanentUrl" id="perm-url" readonly />
+                    <button class="btn btn-outline-primary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('perm-url').value)">Copy</button>
+                </div>
+                <label class="form-label fw-bold">HTML Embed Code:</label>
+                <textarea class="form-control form-control-sm" rows="4" id="perm-html" readonly>@permanentHtml</textarea>
+                <button class="btn btn-primary btn-sm mt-2" onclick="navigator.clipboard.writeText(document.getElementById('perm-html').value)">Copy HTML</button>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header bg-warning">
+                <strong>⏱ Time-Limited Embed (24 hours)</strong>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">Link expires in 24 hours. Use for temporary/preview sharing.</p>
+                <label class="form-label fw-bold">Embed URL:</label>
+                <div class="input-group mb-2">
+                    <input type="text" class="form-control form-control-sm" value="@timedUrl" id="timed-url" readonly />
+                    <button class="btn btn-outline-primary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('timed-url').value)">Copy</button>
+                </div>
+                <label class="form-label fw-bold">HTML Embed Code:</label>
+                <textarea class="form-control form-control-sm" rows="4" id="timed-html" readonly>@timedHtml</textarea>
+                <button class="btn btn-primary btn-sm mt-2" onclick="navigator.clipboard.writeText(document.getElementById('timed-html').value)">Copy HTML</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<h4>Preview</h4>
+<div class="ratio ratio-16x9 mb-4" style="max-width:960px; border:2px solid #333;">
+    <iframe src="@permanentUrl" frameborder="0" allow="encrypted-media; autoplay" allowfullscreen></iframe>
+</div>
+
+<h4>Instructions for cifm.polytronx.com</h4>
+<div class="card">
+    <div class="card-body">
+        <ol>
+            <li>Copy the <strong>Permanent Embed HTML</strong> code above.</li>
+            <li>Paste it into your website's HTML where you want the video to appear.</li>
+            <li>Ensure the VideoSecurity app is accessible at <code>@publicBaseUrl</code> from the internet.</li>
+            <li>
+                <strong>Bunny Dashboard settings required:</strong>
+                <ul>
+                    <li>Stream Library &rarr; Security &rarr; <em>Allowed Referrer Domains</em>: add <code>cifm.polytronx.com</code></li>
+                    <li>Stream Library &rarr; Security &rarr; <em>Token Authentication</em>: ON</li>
+                    <li>Stream Library &rarr; DRM &rarr; <em>MediaCage Basic</em>: ON</li>
+                </ul>
+            </li>
+            <li>Test with <strong>Cococut</strong> — it should fail to find downloadable URLs.</li>
+            <li>Open DevTools — try removing the watermark — watch it self-heal.</li>
+        </ol>
+    </div>
+</div>

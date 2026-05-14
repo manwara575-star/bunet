@@ -1,0 +1,45 @@
+@model IEnumerable<VideoSecurity.Domain.Entities.Video>
+@{ ViewData["Title"] = "Admin"; }
+
+<h1>Videos</h1>
+<p>
+    <a asp-action="Upload" class="btn btn-primary">Upload new video</a>
+    <a href="/admin/sync-all" class="btn btn-outline-warning ms-2">🔄 Sync All from Bunny</a>
+</p>
+
+@if (TempData["SyncResult"] is string syncMsg)
+{
+    <div class="alert alert-info">@syncMsg</div>
+}
+
+<table class="table table-sm">
+    <thead><tr><th>Title</th><th>Status</th><th>Bunny ID</th><th>Created</th><th>Course</th><th></th></tr></thead>
+    <tbody>
+    @foreach (var v in Model)
+    {
+        <tr>
+            <td>@v.Title</td>
+            <td>@v.Status (@v.DurationSeconds.ToString("F0")s)</td>
+            <td><code>@v.BunnyVideoId</code></td>
+            <td>@v.CreatedAt.UtcDateTime.ToString("u")</td>
+            <td>@v.CourseId</td>
+            <td>
+                <a href="/admin/sync/@v.Id" class="btn btn-sm btn-outline-warning" title="Sync status from Bunny">🔄</a>
+                <a href="/player/watch/@v.Id" class="btn btn-sm btn-outline-secondary">Preview</a>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h2>Grant access</h2>
+<form asp-action="Grant" method="post" class="row g-2">
+    @Html.AntiForgeryToken()
+    <div class="col-auto"><input name="userId" placeholder="User Id" class="form-control" required /></div>
+    <div class="col-auto">
+        <select name="videoId" class="form-select" required>
+            @foreach (var v in Model) { <option value="@v.Id">@v.Title</option> }
+        </select>
+    </div>
+    <div class="col-auto"><button class="btn btn-success" type="submit">Grant</button></div>
+</form>

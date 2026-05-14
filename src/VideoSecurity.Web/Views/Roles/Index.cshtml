@@ -1,0 +1,67 @@
+@model VideoSecurity.Web.Controllers.Admin.RolesController.IndexViewModel
+@{ ViewData["Title"] = "Roles"; }
+
+<h1>Users &amp; roles</h1>
+
+@if (TempData["RoleMessage"] is string msg)
+{
+    <div class="alert alert-info">@msg</div>
+}
+
+<table class="table table-sm">
+    <thead><tr><th>User</th><th>Email</th><th>Roles</th><th>Manage</th></tr></thead>
+    <tbody>
+    @foreach (var u in Model.Users)
+    {
+        <tr>
+            <td><code>@u.Id</code><br />@u.UserName</td>
+            <td>@u.Email</td>
+            <td>
+                @foreach (var r in u.Roles)
+                {
+                    <span class="badge bg-secondary me-1">@r</span>
+                }
+            </td>
+            <td>
+                <form asp-action="Grant" method="post" class="row g-1 mb-1">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="userId" value="@u.Id" />
+                    <div class="col-auto">
+                        <select name="role" class="form-select form-select-sm">
+                            @foreach (var r in Model.AvailableRoles)
+                            {
+                                <option value="@r">@r</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-auto"><button class="btn btn-sm btn-success" type="submit">Grant</button></div>
+                </form>
+                <form asp-action="Revoke" method="post" class="row g-1">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="userId" value="@u.Id" />
+                    <div class="col-auto">
+                        <select name="role" class="form-select form-select-sm">
+                            @foreach (var r in u.Roles)
+                            {
+                                <option value="@r">@r</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-auto"><button class="btn btn-sm btn-outline-danger" type="submit">Revoke</button></div>
+                </form>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<nav>
+    <ul class="pagination">
+        @for (var p = 1; p <= Model.TotalPages; p++)
+        {
+            <li class="page-item @(p == Model.Page ? "active" : "")">
+                <a class="page-link" asp-action="Index" asp-route-page="@p">@p</a>
+            </li>
+        }
+    </ul>
+</nav>

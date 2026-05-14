@@ -1,0 +1,265 @@
+# VideoSecurity — Bunny Stream + ASP.NET Core
+
+Greenfield enterprise video security layer that uses **Bunny.net Stream** for upload,
+storage, transcoding, DRM playback, and CDN delivery. Built on **ASP.NET Core (.NET 10)**
+with EF Core (SQLite), ASP.NET Identity, and a Bunny **Embed-only** protected player.
+
+> **Threat focus**
+> 1. **Stop CocoCut-style HLS / M3U8 / TS / MP4 downloading** — primary, hard goal.
+> 2. **Deter & trace screen recording** — best-effort browser hardening + visible
+>    moving forensic watermark (User ID + session marker + timestamp).
+>
+> Real screen-recording prevention requires Bunny **MediaCage Enterprise DRM**
+> (Widevine / FairPlay) and is documented as a future upgrade path. This codebase
+> targets Basic DRM + Embed-only playback today.
+
+## Architecture
+
+```
+src/
+  VideoSecurity.Domain/          # Entities, DTOs, Abstractions (no deps)
+  VideoSecurity.Infrastructure/  # EF Core, Identity stores, Bunny clients & signers, services
+  VideoSecurity.Web/             # MVC + Razor Pages + API + Identity UI + Player + Admin
+tests/
+  VideoSecurity.UnitTests/       # Signers, entitlement, session lifecycle
+  VideoSecurity.IntegrationTests # WireMock.Net Bunny mock + WebApplicationFactory
+  e2e/                           # Playwright smoke (no raw URL leakage, security headers)
+tools/
+  watermark.ps1                  # Optional pre-upload FFmpeg watermark
+```
+
+## Key security properties
+
+| Concern | Where | Notes |
+|---|---|---|
+| No raw `.m3u8` / `.ts` / `.mp4` ever in app DOM/logs | `PlayerController` only renders an iframe shell; a short-lived Bunny Embed URL is fetched via `/api/videos/{id}/playback-session` and assigned to `iframe.src` from JS. | Verified by leak tests and authenticated playback tests. |
+| Signed Bunny **Embed Token** (SHA256) | `BunnyEmbedTokenSigner` | Per <https://docs.bunny.net/stream/token-authentication>. Library must have **MediaCage Basic DRM** + **Embed View Token Authentication** + **Block Direct URL File Access** + tight **Allowed Domains** + MP4 Fallback **off**. |
+| Signed Bunny **TUS upload** credentials | `BunnyTusUploadSigner` | `SHA256(libraryId + apiKey + expire + videoId)` per <https://docs.bunny.net/stream/tus-resumable-uploads>. Library API key never reaches the browser. |
+| Optional **CDN Advanced Token** signer (HMAC-SHA256, `HS256-`, `token_path`) | `BunnyCdnTokenSigner` | Only used if a non-Embed CDN URL must ever be exposed; v1 player path never calls it. |
+| Server-side entitlement | `VideoEntitlementService` | Per-user, per-video and per-course grants with expiry + revocation. |
+| Short-lived playback session | `PlaybackSessionService` | Default TTL is 15 minutes, IP/UA are HMAC-hashed (never raw), heartbeat updates progress + risk score, revocation supported. Already-issued Bunny embed URLs remain bearer tokens until expiry. |
+| Hardening headers | `SecurityHeadersMiddleware` | CSP allows scripts from self only, `frame-src` whitelists `iframe.mediadelivery.net`, `media-src 'none'`, `Permissions-Policy: display-capture=()`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`. |
+| Forensic watermark | `wwwroot/js/player.js` + `wwwroot/css/player.css` | Two semi-transparent spans drift across the player every ~3.5s with `User · Session · UTC time`. App-level fullscreen keeps watermark above the iframe. |
+| Webhook auth | `BunnyWebhookController` | Fails closed. Accepts Bunny Stream HMAC headers or a configured `X-Bunny-Webhook-Secret`; validates library id, blocks status downgrades, and stores recent body hashes to ignore duplicate replays. |
+| Telemetry | `SecurityEventService` + `/api/security/video-events` | Records visibility loss, focus loss, dev-tools heuristic, suspected recording. Anonymous events are rate-limited and cannot attach arbitrary session/video ids. |
+| Identity | ASP.NET Core Identity + cookies, `Admin` role-policy, seeded admin via `Seed:*`. | Strict cookies (`SameSite=Strict`, `HttpOnly`, `Secure=Always`) plus global antiforgery for cookie-authenticated APIs. |
+
+## Configuration
+
+Bunny **never** stores its real secrets in source control. Use **dotnet user-secrets**
+in dev and environment variables in prod (`docker-compose.yml` shows the variable names).
+
+```powershell
+cd src/VideoSecurity.Web
+dotnet user-secrets init
+dotnet user-secrets set "Bunny:LibraryId"      "12345"
+dotnet user-secrets set "Bunny:ApiKey"         "<library-api-key>"
+dotnet user-secrets set "Bunny:EmbedTokenKey"  "<library-embed-token-key>"
+dotnet user-secrets set "Bunny:CdnHostname"    "vz-xxxxxx.b-cdn.net"
+dotnet user-secrets set "Bunny:CdnTokenKey"    "<advanced-cdn-token-key>"   # optional
+dotnet user-secrets set "Bunny:PrivacyHashPepper" "<long-random>"           # recommended
+dotnet user-secrets set "Bunny:WebhookSecret"  "<long-random>"              # custom fallback; Bunny signed headers also supported
+dotnet user-secrets set "Seed:AdminEmail"      "you@example.com"
+dotnet user-secrets set "Seed:AdminPassword"   "<strong-password>"
+```
+
+Startup fails fast when required Bunny settings are missing or still set to placeholders.
+
+The Bunny library itself must be configured (manually in the Bunny dashboard) with:
+
+- **MediaCage Basic DRM** = ON
+- **Embed View Token Authentication** = ON
+- **Block Direct URL File Access** = ON
+- **Allowed Domains** = exact production + staging hostnames only
+- **MP4 Fallback** = OFF, **Early-Play** = OFF, **Keep Original Files** = OFF
+- (Optional) **Advanced CDN Token Authentication** = ON, HMAC-SHA256
+
+## Run
+
+```powershell
+dotnet restore VideoSecurity.slnx
+dotnet build VideoSecurity.slnx
+dotnet test VideoSecurity.slnx
+dotnet run --project src/VideoSecurity.Web --urls https://localhost:5001
+```
+
+Visit:
+- `/`                       — landing
+- `/catalog`                — entitled user video catalog
+- `/Identity/Account/Login` — sign in (admin seeded if `Seed:*` set)
+- `/admin`                  — admin video list + grant access
+- `/admin/upload`           — TUS upload to Bunny
+- `/player/watch/{guid}`    — protected player (auth + entitlement required)
+- `/swagger`                — API explorer (Development only)
+
+## API contract
+
+| Method | Route | Auth | Purpose |
+|---|---|---|---|
+| POST | `/api/admin/videos` | Admin | Create Bunny video object + return TUS upload credentials |
+| GET  | `/api/admin/videos/{id}` | Admin | Read local + (best-effort) Bunny status |
+| GET  | `/api/admin/videos` | Admin | List videos |
+| DELETE | `/api/admin/videos/{id}` | Admin | Soft-delete locally + delete in Bunny |
+| GET | `/api/admin/sessions` | Admin | List playback sessions |
+| POST | `/api/admin/sessions/{sessionId}/revoke` | Admin | Revoke a playback session |
+| GET | `/api/me/videos` | User | List videos the signed-in user may watch |
+| GET | `/api/me/progress/{videoId}` | User | Read current progress for a video |
+| POST | `/api/videos/{id}/playback-session` | User | Returns `{sessionId, embedUrl, expiresAt, watermark}` |
+| POST | `/api/videos/heartbeat` | User | Updates session + progress + risk score |
+| POST | `/api/security/video-events` | Anon | Records best-effort security telemetry |
+| POST | `/api/webhooks/bunny/stream` | Bunny signature/secret | Updates local video status |
+| GET | `/health/live` | Anon | Liveness probe |
+| GET | `/health/ready` | Anon | Readiness probe with SQLite check |
+
+## What this project does **not** promise
+
+- It does **not** prevent screen recording from a determined user on a normal browser.
+  No web-only solution can. Visible watermark + Bunny Embed DRM is the deterrent.
+- It does **not** ship a Shaka / hls.js player. MediaCage Basic requires Bunny's
+  Embed View. A custom DRM player is only relevant if you upgrade to **MediaCage
+  Enterprise DRM** (Widevine + FairPlay) and pursue OS-level output protection.
+
+## Pre-upload watermark helper
+
+```powershell
+.\tools\watermark.ps1 -Input source.mp4 -Output source.wm.mp4 -Text "INTERNAL ONLY"
+```
+
+## Docker
+
+```powershell
+docker compose up -d --build
+```
+
+Pass real Bunny secrets via an `.env` file (matching the variable names in `docker-compose.yml`).
+**Never** commit that file.
+
+`docker-compose.yml` disables HTTPS redirection only so the sample container is reachable on local HTTP port 8080. Put TLS in front for production and send `X-Forwarded-Proto=https` from the reverse proxy.
+
+## Tests
+
+| Suite | Command |
+|---|---|
+| Unit + Integration | `dotnet test VideoSecurity.slnx` (73 tests at last verification) |
+| Playwright E2E | `cd tests/e2e; npm ci; npx playwright install --with-deps chromium; npx playwright test` |
+
+CI: `.github/workflows/ci.yml` runs both on push/PR.
+
+## Production deployment
+
+> Treat this section as the canonical operator runbook. Anything not listed here
+> defaults to the appsettings shipped in the image.
+
+### Required environment variables
+
+All Bunny secrets are bound from configuration; map them via the `.env` file
+consumed by `docker-compose.yml` (or the equivalent secret store on your platform):
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `ASPNETCORE_ENVIRONMENT` | yes | Must be `Production` to load `appsettings.Production.json`. |
+| `ConnectionStrings__DefaultConnection` | yes | EF Core SQLite connection string. Default: `Data Source=/data/videosecurity.db`. |
+| `Bunny__LibraryId` | yes | Numeric Bunny Stream library ID. |
+| `Bunny__ApiKey` | yes | Bunny library API key (≥ 16 chars). |
+| `Bunny__EmbedTokenKey` | yes | Embed View Token Authentication Key (≥ 16 chars). |
+| `Bunny__CdnHostname` | yes | Pull Zone hostname, must match `^[a-z0-9-]+\.b-cdn\.net$`. |
+| `Bunny__CdnTokenKey` | optional | Only needed for Advanced URL token signing. |
+| `Bunny__PrivacyHashPepper` | strongly recommended | 32+ char random secret for IP/UA audit hashing. Startup logs a warning if missing. |
+| `Bunny__WebhookSecret` | recommended | Custom shared secret for the Bunny webhook fallback verifier. |
+| `Hosting__DisableHttpsRedirection` | situational | `true` only when TLS terminates at a proxy that forwards `X-Forwarded-Proto=https`. |
+| `Seed__AdminEmail` / `Seed__AdminPassword` | first boot only | Used by `IdentitySeeder` to create the first admin. Rotate immediately after first login. |
+
+`BunnyOptionsValidator` runs at startup and fails fast if any of the placeholder
+strings (`<library-api-key>`, `your-`, `replace-me`, `changeme`, `xxxx`,
+`REPLACE_WITH_USER_SECRETS_OR_ENV`) leak into a real deployment.
+
+### TLS termination at the proxy
+
+The container listens on plain HTTP `:8080` only. Terminate TLS at your reverse
+proxy (Nginx, Caddy, Traefik, ALB, Cloudflare, etc.) and forward:
+
+- `X-Forwarded-Proto: https`
+- `X-Forwarded-For: <client-ip>`
+- `Host: <public-hostname>`
+
+ASP.NET Core's forwarded-headers middleware rewrites the request scheme so that
+secure cookies, redirects, and CSP report URIs work correctly. Keep
+`Hosting__DisableHttpsRedirection=true` when the proxy already enforces HTTPS,
+otherwise leave it `false` (the production default).
+
+### Bunny library configuration checklist
+
+Re-link to the dashboard checklist in [Configuration](#configuration):
+
+- **MediaCage Basic DRM** = ON
+- **Embed View Token Authentication** = ON
+- **Block Direct URL File Access** = ON
+- **Allowed Domains** = exact production + staging hostnames only
+- **MP4 Fallback** = OFF, **Early-Play** = OFF, **Keep Original Files** = OFF
+
+### Health probes
+
+| Probe | Path | What it checks |
+|---|---|---|
+| Liveness | `GET /health/live` | Process is up. |
+| Readiness | `GET /health/ready` | SQLite reachable + **no pending EF Core migrations** (via `AppMigrationHealthCheck`). |
+
+`docker-compose.yml` polls `/health/ready` every 30 s with `wget`. The Dockerfile
+itself omits a `HEALTHCHECK` because the `aspnet:10.0` base image does not ship
+`curl`/`wget`; rely on the orchestrator (Compose / Kubernetes) instead.
+
+### Metrics scraping
+
+Prometheus-compatible metrics are served at:
+
+```
+GET /metrics
+GET /metrics/app
+```
+
+`/metrics` exposes the OpenTelemetry Prometheus scrape surface. `/metrics/app`
+exposes DB-backed application gauges used by the hardening tests. Scrape both
+from inside the trust boundary only. Restrict access to both paths via the
+reverse proxy or by binding the metrics port to a private network if you split
+it out.
+
+### Database storage and backups
+
+- **SQLite (default):** the persistent volume `videosec-data` mounts at `/data`.
+  Back up `videosecurity.db`, `videosecurity.db-wal`, and `videosecurity.db-shm`
+  atomically (e.g. `sqlite3 .backup` or `litestream`). Snapshot the volume at
+  least daily and before every deploy.
+- **Other database engines:** not supported by configuration alone today. The
+  infrastructure currently registers SQLite explicitly, so PostgreSQL or SQL
+  Server require a code-level provider change plus matching migrations.
+
+### Secret rotation runbook
+
+Rotate the following secrets on a regular cadence and after any suspected
+compromise. The flow is intentionally low-risk:
+
+1. **`Bunny__EmbedTokenKey`** — generate a new key in the Bunny dashboard,
+   update the env var, and roll the container. Visit `/admin/keys` to confirm
+   the application reports the new key fingerprint. Outstanding embed URLs stay
+   valid until their expiry (default 15 minutes).
+2. **`Bunny__ApiKey`** — rotate in the Bunny dashboard, then update the env var
+   and roll the container. Admin upload + status calls will start using the new
+   key on next boot. Confirm via `/admin/keys`.
+3. **`Bunny__WebhookSecret`** — generate a new long random string, update both
+   the Bunny webhook configuration and the env var, then roll the container.
+   The webhook controller fails closed: requests carrying the old secret are
+   rejected immediately after rotation, so coordinate with Bunny's retry window.
+
+### Incident response
+
+When investigating suspicious playback, scraping, or upload activity:
+
+1. Pull the playback session list from `/admin/sessions` and revoke active
+   sessions for the affected user.
+2. Cross-reference the actor + timeline in `/admin/audit` (audit log of admin
+   actions, key rotations, grants, and security policy changes).
+3. Review `/admin/security` for client-side telemetry (focus loss, dev-tools
+   heuristics, suspected screen recording) flagged for the same user/video.
+4. If a key was exposed, follow the *Secret rotation runbook* above and force a
+   password reset for impacted users.
+

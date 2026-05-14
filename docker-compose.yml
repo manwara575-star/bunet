@@ -1,0 +1,34 @@
+services:
+  web:
+    build: .
+    container_name: videosecurity-web
+    ports:
+      - "${HOST_PORT:-5102}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      Hosting__DisableHttpsRedirection: "true"
+      ConnectionStrings__DefaultConnection: "Data Source=/data/videosecurity.db"
+      Bunny__LibraryId: "${BUNNY_LIBRARY_ID:-0}"
+      Bunny__ApiKey: "${BUNNY_API_KEY:-}"
+      Bunny__EmbedTokenKey: "${BUNNY_EMBED_TOKEN_KEY:-}"
+      Bunny__CdnHostname: "${BUNNY_CDN_HOSTNAME:-vz-replace-me.b-cdn.net}"
+      Bunny__CdnTokenKey: "${BUNNY_CDN_TOKEN_KEY:-}"
+      Bunny__PrivacyHashPepper: "${PRIVACY_HASH_PEPPER:-}"
+      Bunny__WebhookSecret: "${BUNNY_WEBHOOK_SECRET:-}"
+      Seed__AdminEmail: "${SEED_ADMIN_EMAIL:-admin@cifm.polytronx.com}"
+      Seed__AdminPassword: "${SEED_ADMIN_PASSWORD:-}"
+      Embed__AllowedDomains: "${EMBED_ALLOWED_DOMAINS:-cifm.polytronx.com}"
+      Embed__PublicBaseUrl: "${EMBED_PUBLIC_BASE_URL:-https://cifm.polytronx.com}"
+    volumes:
+      - videosec-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--max-time", "3", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  videosec-data:

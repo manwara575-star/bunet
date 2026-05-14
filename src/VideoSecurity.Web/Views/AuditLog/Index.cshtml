@@ -1,0 +1,67 @@
+@model VideoSecurity.Web.Controllers.Admin.AuditLogController.IndexViewModel
+@using VideoSecurity.Domain.Entities
+@{ ViewData["Title"] = "Audit log"; }
+
+<h1>Audit log</h1>
+
+<form method="get" class="row g-2 mb-3">
+    <div class="col-auto">
+        <input class="form-control form-control-sm" name="actor" placeholder="Actor user id" value="@Model.Actor" />
+    </div>
+    <div class="col-auto">
+        <select class="form-select form-select-sm" name="action">
+            <option value="">(any action)</option>
+            @foreach (var a in Enum.GetValues<AuditAction>())
+            {
+                <option value="@a" selected="@(string.Equals(Model.Action, a.ToString(), StringComparison.OrdinalIgnoreCase))">@a</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <input class="form-control form-control-sm" type="datetime-local" name="from" value="@(Model.From?.UtcDateTime.ToString("yyyy-MM-ddTHH:mm"))" />
+    </div>
+    <div class="col-auto">
+        <input class="form-control form-control-sm" type="datetime-local" name="to" value="@(Model.To?.UtcDateTime.ToString("yyyy-MM-ddTHH:mm"))" />
+    </div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Filter</button></div>
+</form>
+
+<table class="table table-sm table-striped">
+    <thead>
+        <tr>
+            <th>When (UTC)</th>
+            <th>Actor</th>
+            <th>Action</th>
+            <th>Entity</th>
+            <th>Metadata</th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var a in Model.Rows)
+    {
+        <tr>
+            <td>@a.CreatedAt.UtcDateTime.ToString("u")</td>
+            <td><code>@a.ActorUserId</code></td>
+            <td>@a.Action</td>
+            <td>@a.EntityType / <code>@a.EntityId</code></td>
+            <td><pre class="m-0 small" style="white-space:pre-wrap">@a.MetadataJson</pre></td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<nav>
+    <ul class="pagination">
+        @for (var p = 1; p <= Model.TotalPages; p++)
+        {
+            <li class="page-item @(p == Model.Page ? "active" : "")">
+                <a class="page-link" asp-action="Index"
+                   asp-route-page="@p"
+                   asp-route-actor="@Model.Actor"
+                   asp-route-action="@Model.Action"
+                   asp-route-from="@Model.From"
+                   asp-route-to="@Model.To">@p</a>
+            </li>
+        }
+    </ul>
+</nav>

@@ -1,0 +1,56 @@
+@model IEnumerable<VideoSecurity.Domain.Entities.SigningKeyVersion>
+@using VideoSecurity.Domain.Entities
+@{ ViewData["Title"] = "Signing keys"; }
+
+<h1>Signing keys</h1>
+
+@if (TempData["KeyRotationMessage"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+
+<div class="alert alert-warning">
+    This screen records <strong>when</strong> operators rotated a signing key. The actual signing
+    keys. Bunny API, embed, CDN, webhook, and privacy secrets are changed from
+    <a href="/admin/bunny">Bunny settings</a>; then click "Record rotation" here so the audit trail
+    and on-call dashboards reflect the new active version.
+</div>
+
+@foreach (var grp in Model.GroupBy(k => k.Purpose))
+{
+    <h2>@grp.Key</h2>
+    <table class="table table-sm">
+        <thead><tr><th>Version</th><th>Active</th><th>Created</th><th>Retired</th><th>Notes</th></tr></thead>
+        <tbody>
+        @foreach (var k in grp.OrderByDescending(k => k.Version))
+        {
+            <tr class="@(k.IsActive ? "table-success" : "")">
+                <td>v@(k.Version)</td>
+                <td>@(k.IsActive ? "ACTIVE" : "")</td>
+                <td>@k.CreatedAt.UtcDateTime.ToString("u")</td>
+                <td>@(k.RetiredAt?.UtcDateTime.ToString("u") ?? "-")</td>
+                <td>@k.Notes</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+<h2>Record a rotation</h2>
+<form asp-action="Rotate" method="post" class="row g-2">
+    @Html.AntiForgeryToken()
+    <div class="col-auto">
+        <select name="purpose" class="form-select" required>
+            @foreach (var p in Enum.GetValues<SigningKeyPurpose>())
+            {
+                <option value="@p">@p</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <input name="notes" placeholder="Notes (operator, ticket #, etc.)" class="form-control" maxlength="512" />
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary">Record rotation</button>
+    </div>
+</form>

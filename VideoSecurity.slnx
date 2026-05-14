@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/VideoSecurity.Domain/VideoSecurity.Domain.csproj" />
+    <Project Path="src/VideoSecurity.Infrastructure/VideoSecurity.Infrastructure.csproj" />
+    <Project Path="src/VideoSecurity.Web/VideoSecurity.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/VideoSecurity.IntegrationTests/VideoSecurity.IntegrationTests.csproj" />
+    <Project Path="tests/VideoSecurity.UnitTests/VideoSecurity.UnitTests.csproj" />
+  </Folder>
+</Solution>
