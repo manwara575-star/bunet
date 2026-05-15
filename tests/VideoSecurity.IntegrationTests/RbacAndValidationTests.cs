@@ -149,8 +149,7 @@ public sealed class RbacAndValidationTests : IClassFixture<BunnyMockFactory>
     {
         var client = _baseline.CreateClient(new() { AllowAutoRedirect = false });
         var resp = await client.GetAsync("/metrics/app");
-        // MetricsController no longer has [AllowAnonymous] so it requires auth.
-        ((int)resp.StatusCode).Should().BeOneOf(200, 401, 302);
+        ((int)resp.StatusCode).Should().BeOneOf(401, 302);
     }
 
     // ----- Audit log immutability -----

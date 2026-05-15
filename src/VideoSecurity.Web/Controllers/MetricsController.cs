@@ -6,6 +6,7 @@ using VideoSecurity.Infrastructure.Persistence;
 
 namespace VideoSecurity.Web.Controllers;
 
+[Authorize(Policy = "MetricsOnly")]
 public sealed class MetricsController : ControllerBase
 {
     private readonly AppDbContext _db;

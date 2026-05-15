@@ -61,6 +61,37 @@ public class DeviceFingerprintRiskTests
     }
 
     [Fact]
+    public async Task WatermarkPayloadHash_StoredOnCreate_DetectsTamper()
+    {
+        await using var db = NewDb();
+        var v = new Video { Title = "wm-tamper", BunnyVideoId = "bWT", CreatedByUserId = "u1", Status = VideoStatus.Ready };
+        db.Videos.Add(v);
+        await db.SaveChangesAsync();
+
+        var opts = new BunnyOptions
+        {
+            LibraryId = 1, ApiKey = "k", EmbedTokenKey = "kk",
+            DefaultSessionTtl = TimeSpan.FromMinutes(15)
+        };
+        var svc = Build(db, opts, new FakeClock());
+        var resp = await svc.CreateAsync("u1", v.Id, "1.2.3.4", "ua", default);
+
+        var session = await db.PlaybackSessions.SingleAsync();
+
+        // The service should store a hash of the watermark token
+        session.WatermarkPayloadHash.Should().NotBeNullOrEmpty("watermark hash must be persisted");
+
+        // Verify the stored hash matches the token returned to the client
+        var expectedHash = HashUtil.Sha256(resp.Watermark.Token);
+        session.WatermarkPayloadHash.Should().Be(expectedHash, "hash should match the watermark token");
+
+        // A tampered token should produce a DIFFERENT hash
+        var tamperedToken = resp.Watermark.Token + "TAMPERED";
+        var tamperedHash = HashUtil.Sha256(tamperedToken);
+        tamperedHash.Should().NotBe(session.WatermarkPayloadHash, "tampered token should not match stored hash");
+    }
+
+    [Fact]
     public async Task Heartbeat_SameDeviceFingerprint_NoRiskIncrease()
     {
         await using var db = NewDb();

@@ -141,8 +141,9 @@ public sealed class EmbedController : Controller
 
         if (session is null) return NotFound();
 
-        // Only allow heartbeats for embed sessions
-        if (!session.UserId.StartsWith("embed:", StringComparison.Ordinal))
+        // Only allow heartbeats for embed and demo sessions (not authenticated user sessions)
+        if (!session.UserId.StartsWith("embed:", StringComparison.Ordinal) &&
+            !session.UserId.StartsWith("demo:", StringComparison.Ordinal))
             return Forbid();
 
         try

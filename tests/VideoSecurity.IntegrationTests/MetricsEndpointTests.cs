@@ -1,4 +1,7 @@
 using FluentAssertions;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using VideoSecurity.Domain.Entities;
 using VideoSecurity.Infrastructure.Persistence;
@@ -13,7 +16,8 @@ public sealed class MetricsEndpointTests : IClassFixture<BunnyMockFactory>
     [Fact]
     public async Task AppMetricsEndpoint_ReturnsPrometheusFormat()
     {
-        var client = _f.CreateClient();
+        await using var factory = AuthFactory();
+        var client = factory.CreateClient();
         var resp = await client.GetAsync("/metrics/app");
         resp.IsSuccessStatusCode.Should().BeTrue();
         resp.Content.Headers.ContentType?.MediaType.Should().StartWith("text/plain");
@@ -25,11 +29,12 @@ public sealed class MetricsEndpointTests : IClassFixture<BunnyMockFactory>
     [Fact]
     public async Task AppMetricsEndpoint_CountsOnlyActiveSessions_WithSameDayExpiryBounds()
     {
-        var client = _f.CreateClient();
+        await using var factory = AuthFactory();
+        var client = factory.CreateClient();
         var before = ParseMetric(await client.GetStringAsync("/metrics/app"), "videosecurity_active_playback_sessions");
         var now = DateTimeOffset.UtcNow;
 
-        using (var scope = _f.Services.CreateScope())
+        using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             db.PlaybackSessions.AddRange(
@@ -58,6 +63,25 @@ public sealed class MetricsEndpointTests : IClassFixture<BunnyMockFactory>
 
         var after = ParseMetric(await client.GetStringAsync("/metrics/app"), "videosecurity_active_playback_sessions");
         after.Should().Be(before + 1);
+    }
+
+    private Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> AuthFactory()
+    {
+        return _f.WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddAuthentication(TestAuthHandler.SchemeName)
+                    .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, _ => { });
+                services.Configure<AuthenticationOptions>(o =>
+                {
+                    o.DefaultAuthenticateScheme = TestAuthHandler.SchemeName;
+                    o.DefaultChallengeScheme = TestAuthHandler.SchemeName;
+                    o.DefaultScheme = TestAuthHandler.SchemeName;
+                });
+            });
+        });
     }
 
     private static long ParseMetric(string body, string metricName)

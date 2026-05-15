@@ -405,14 +405,11 @@ public class HealthCheckTests : IClassFixture<BunnyMockFactory>
     }
 
     [Fact]
-    public async Task MetricsEndpoint_ReturnsPrometheusText()
+    public async Task MetricsEndpoint_RequiresAuth()
     {
-        var c = _f.CreateClient();
+        var c = _f.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         var r = await c.GetAsync("/metrics/app");
-        r.IsSuccessStatusCode.Should().BeTrue();
-        var body = await r.Content.ReadAsStringAsync();
-        body.Should().Contain("videosecurity_active_playback_sessions");
-        r.Content.Headers.ContentType?.MediaType.Should().Be("text/plain");
+        ((int)r.StatusCode).Should().BeOneOf(401, 302, 403);
     }
 
     [Fact]

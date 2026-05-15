@@ -35,6 +35,11 @@ public sealed class BunnyOptionsProvider : IBunnyOptionsProvider
         _logger = logger;
     }
 
+    /// <summary>
+    /// Synchronous accessor — returns the cached options, or blocks once to prime
+    /// the cache from the database. After the first call the value is in-memory.
+    /// Prefer <see cref="GetAsync"/> in async contexts.
+    /// </summary>
     public BunnyOptions Current
     {
         get

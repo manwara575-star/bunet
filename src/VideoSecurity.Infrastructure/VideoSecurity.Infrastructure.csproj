@@ -23,4 +23,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="VideoSecurity.UnitTests" />
+  </ItemGroup>
+
 </Project>
