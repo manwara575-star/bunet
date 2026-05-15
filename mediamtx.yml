@@ -1,5 +1,10 @@
 logLevel: info
 
+api: no
+rtmp: no
+hls: no
+srt: no
+
 # Free self-hosted Secure WebRTC worker.
 # ASP.NET starts FFmpeg per secure playback session and publishes:
 #   rtsp://mediamtx:8554/{sessionId}
@@ -10,7 +15,7 @@ rtspAddress: :8554
 
 webrtc: yes
 webrtcAddress: :8889
-webrtcAllowOrigin: "*"
+webrtcAllowOrigins: ["*"]
 webrtcLocalUDPAddress: :8189
 webrtcAdditionalHosts: []
 

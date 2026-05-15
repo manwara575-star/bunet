@@ -384,6 +384,84 @@ public sealed class AuthenticatedPlaybackTests : IClassFixture<BunnyMockFactory>
     }
 
     [Fact]
+    public async Task SecureWebRtcPublicDemo_ProxiesOfferWithoutLoginOrAntiforgery()
+    {
+        await using var factory = _f.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, cfg) =>
+            {
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["SecurePlayback:Enabled"] = "true",
+                    ["SecurePlayback:WhepEndpointTemplate"] = $"{_f.Bunny.Url}/public-whep/{{sessionId}}",
+                    ["SecurePlayback:StartFfmpegOnSessionCreate"] = "false",
+                    ["SecurePlayback:BurnWatermark"] = "true"
+                });
+            });
+        });
+
+        var videoId = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var storage = scope.ServiceProvider.GetRequiredService<IProtectedMediaStorage>();
+            await using var source = new MemoryStream([1, 2, 3, 4]);
+            var saved = await storage.SaveSourceAsync(videoId, "secure.mp4", "video/mp4", source, default);
+
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Videos.Add(new Video
+            {
+                Id = videoId,
+                Title = "Public Secure WebRTC",
+                BunnyLibraryId = 0,
+                BunnyVideoId = "local-" + videoId.ToString("N"),
+                PlaybackProvider = PlaybackProvider.SecureWebRtc,
+                ProtectedMediaStatus = ProtectedMediaStatus.SourceUploaded,
+                ProtectedSourcePath = saved.RelativePath,
+                Status = VideoStatus.Ready,
+                AllowPublicDemo = true,
+                CreatedByUserId = TestAuthHandler.UserId
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        client.BaseAddress = new Uri("https://localhost");
+        var demo = await client.GetAsync($"/demo/{videoId}");
+        demo.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        var html = await demo.Content.ReadAsStringAsync();
+        var bootstrapId = Regex.Match(html, "/public-playback/bootstrap/(?<id>[^\"]+)").Groups["id"].Value;
+        bootstrapId.Should().NotBeNullOrWhiteSpace();
+
+        var sessionResp = await client.PostAsync($"/public-playback/bootstrap/{bootstrapId}", null);
+        sessionResp.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, await sessionResp.Content.ReadAsStringAsync());
+        var session = await sessionResp.Content.ReadFromJsonAsync<PlaybackSessionResponse>();
+        session.Should().NotBeNull();
+        session!.PlaybackProvider.Should().Be(nameof(PlaybackProvider.SecureWebRtc));
+        session.HeartbeatToken.Should().NotBeNullOrWhiteSpace();
+        session.EmbedUrl.Should().BeNull();
+
+        var answerSdp = "v=0\r\ns=public-secure-answer\r\n";
+        _f.Bunny
+            .Given(Request.Create().WithPath($"/public-whep/{session.SessionId:N}").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/sdp")
+                .WithBody(answerSdp));
+
+        var offer = new HttpRequestMessage(HttpMethod.Post, session.SecurePlayback!.OfferEndpoint)
+        {
+            Content = JsonContent.Create(new { type = "offer", sdp = "v=0\r\n" })
+        };
+        offer.Headers.Add("X-Playback-Session-Token", session.HeartbeatToken!);
+
+        var offerResp = await client.SendAsync(offer);
+        var body = await offerResp.Content.ReadAsStringAsync();
+        offerResp.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, body);
+        AssertNoDownloadableUrls(body);
+        body.Should().Contain("public-secure-answer");
+    }
+
+    [Fact]
     public async Task SecureWebRtcHeartbeatRiskRevocation_StopsWorker()
     {
         await using var factory = AuthenticatedFactory(useRecordingWorker: true);

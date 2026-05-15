@@ -16,7 +16,8 @@ namespace VideoSecurity.Web.Controllers.Api;
 
 [ApiController]
 [Route("api/secure-playback")]
-[Authorize]
+[AllowAnonymous]
+[IgnoreAntiforgeryToken]
 public sealed class SecurePlaybackController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -54,12 +55,16 @@ public sealed class SecurePlaybackController : ControllerBase
             return BadRequest(new { error = "A WebRTC SDP offer is required." });
         }
 
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (string.IsNullOrEmpty(userId)) return Unauthorized();
-
         var session = await _db.PlaybackSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         if (session is null) return NotFound();
-        if (session.UserId != userId) return Forbid();
+
+        if (!IsPublicPlaybackSession(session.UserId))
+        {
+            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId)) return Unauthorized();
+            if (session.UserId != userId) return Forbid();
+        }
+
         if (session.Revoked) return Conflict(new { error = "Session revoked." });
         if (DateTimeOffset.UtcNow > session.ExpiresAt) return Conflict(new { error = "Session expired." });
 
@@ -167,6 +172,10 @@ public sealed class SecurePlaybackController : ControllerBase
             or HttpStatusCode.BadGateway
             or HttpStatusCode.ServiceUnavailable
             or HttpStatusCode.GatewayTimeout;
+
+    private static bool IsPublicPlaybackSession(string userId) =>
+        userId.StartsWith("embed:", StringComparison.Ordinal) ||
+        userId.StartsWith("demo:", StringComparison.Ordinal);
 
     private static bool TokenMatches(string? supplied, string? expectedHash)
     {
