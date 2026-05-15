@@ -6,6 +6,7 @@ public interface IBunnyStreamClient
 {
     Task<BunnyCreateVideoResult> CreateVideoAsync(string title, string? collectionId, CancellationToken ct);
     Task<BunnyVideoInfo> GetVideoAsync(string videoId, CancellationToken ct);
+    Task<IReadOnlyList<BunnyVideoInfo>> ListVideosAsync(CancellationToken ct, int page = 1, int perPage = 100);
     Task DeleteVideoAsync(string videoId, CancellationToken ct);
 }
 

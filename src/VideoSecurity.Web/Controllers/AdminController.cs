@@ -93,34 +93,64 @@ public sealed class AdminController : Controller
     [HttpGet("/admin/sync-all")]
     public async Task<IActionResult> SyncAll(CancellationToken ct)
     {
-        var videos = await _db.Videos
-            .Where(v => v.Status != VideoStatus.Deleted && v.Status != VideoStatus.Ready)
-            .ToListAsync(ct);
-
-        int synced = 0, failed = 0;
-        foreach (var v in videos)
+        int imported = 0, updated = 0, failed = 0;
+        try
         {
-            try
+            var bunnyVideos = await _bunny.ListVideosAsync(ct);
+            var existingByBunnyId = await _db.Videos
+                .Where(v => v.Status != VideoStatus.Deleted)
+                .ToDictionaryAsync(v => v.BunnyVideoId, ct);
+            var opts = await _options.GetAsync(ct);
+
+            foreach (var bv in bunnyVideos)
             {
-                var info = await _bunny.GetVideoAsync(v.BunnyVideoId, ct);
-                var newStatus = MapBunnyStatus(info.Status);
-                if (newStatus != v.Status || Math.Abs(info.Length - v.DurationSeconds) > 0.01)
+                try
                 {
-                    v.Status = newStatus;
-                    v.DurationSeconds = info.Length;
-                    v.UpdatedAt = DateTimeOffset.UtcNow;
-                    synced++;
+                    if (existingByBunnyId.TryGetValue(bv.Guid, out var local))
+                    {
+                        var newStatus = MapBunnyStatus(bv.Status);
+                        if (newStatus != local.Status || Math.Abs(bv.Length - local.DurationSeconds) > 0.01)
+                        {
+                            local.Status = newStatus;
+                            local.DurationSeconds = bv.Length;
+                            local.Title = string.IsNullOrWhiteSpace(local.Title) ? bv.Title : local.Title;
+                            local.UpdatedAt = DateTimeOffset.UtcNow;
+                            updated++;
+                        }
+                    }
+                    else
+                    {
+                        _db.Videos.Add(new Video
+                        {
+                            Title = bv.Title,
+                            BunnyLibraryId = bv.LibraryId,
+                            BunnyVideoId = bv.Guid,
+                            BunnyCollectionId = bv.CollectionId,
+                            Status = MapBunnyStatus(bv.Status),
+                            DurationSeconds = bv.Length,
+                            CreatedAt = bv.DateUploaded,
+                            UpdatedAt = DateTimeOffset.UtcNow,
+                            CreatedByUserId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "import"
+                        });
+                        imported++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Sync failed for Bunny video {BunnyGuid}", bv.Guid);
+                    failed++;
                 }
             }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Sync failed for video {VideoId}", v.Id);
-                failed++;
-            }
+
+            await _db.SaveChangesAsync(ct);
+            TempData["SyncResult"] = $"✅ Imported {imported}, updated {updated} video(s) from Bunny" + (failed > 0 ? $", {failed} failed" : "");
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SyncAll failed");
+            TempData["SyncResult"] = $"❌ Sync failed: {ex.Message}";
         }
 
-        await _db.SaveChangesAsync(ct);
-        TempData["SyncResult"] = $"✅ Synced {synced} video(s) from Bunny" + (failed > 0 ? $", {failed} failed" : "");
         return RedirectToAction(nameof(Index));
     }
 

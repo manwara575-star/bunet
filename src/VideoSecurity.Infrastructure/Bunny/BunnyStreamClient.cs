@@ -72,6 +72,34 @@ public sealed class BunnyStreamClient : IBunnyStreamClient
             CollectionId: json.TryGetProperty("collectionId", out var c) ? c.GetString() : null);
     }
 
+    public async Task<IReadOnlyList<BunnyVideoInfo>> ListVideosAsync(CancellationToken ct, int page = 1, int perPage = 100)
+    {
+        var opts = await _options.GetAsync(ct);
+        using var req = new HttpRequestMessage(HttpMethod.Get,
+            BuildUri(opts, $"library/{opts.LibraryId}/videos?page={page}&itemsPerPage={perPage}&orderBy=date"));
+        req.Headers.Add("AccessKey", opts.ApiKey);
+        using var resp = await _http.SendAsync(req, ct);
+        await EnsureSuccess(resp, ct);
+        var json = await resp.Content.ReadFromJsonAsync<JsonElement>(Json, ct);
+
+        var items = new List<BunnyVideoInfo>();
+        if (json.TryGetProperty("items", out var arr) && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var v in arr.EnumerateArray())
+            {
+                items.Add(new BunnyVideoInfo(
+                    Guid: v.GetProperty("guid").GetString()!,
+                    LibraryId: v.TryGetProperty("videoLibraryId", out var lib) ? lib.GetInt64() : opts.LibraryId,
+                    Title: v.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty,
+                    Status: v.TryGetProperty("status", out var s) ? s.GetInt32() : 0,
+                    Length: v.TryGetProperty("length", out var l) && l.ValueKind == JsonValueKind.Number ? l.GetDouble() : 0,
+                    DateUploaded: v.TryGetProperty("dateUploaded", out var d) && d.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(d.GetString(), out var dt) ? dt : DateTimeOffset.UtcNow,
+                    CollectionId: v.TryGetProperty("collectionId", out var c) ? c.GetString() : null));
+            }
+        }
+        return items;
+    }
+
     public async Task DeleteVideoAsync(string videoId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(videoId);
