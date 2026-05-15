@@ -1,0 +1,132 @@
+@using System.Text.Json
+@{
+    Layout = null;
+    var videoTitle = (string)ViewBag.VideoTitle;
+    var videoId = (Guid)ViewBag.VideoId;
+    var sessionJson = (string)ViewBag.SessionJson;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@videoTitle — Secure Demo</title>
+    <link rel="stylesheet" href="/css/player.css" />
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            width: 100%; height: 100%;
+            background: #0a0a0a;
+            font-family: system-ui, -apple-system, sans-serif;
+            color: #fff;
+            overflow: hidden;
+        }
+        .demo-wrapper {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            width: 100vw;
+        }
+        .demo-banner {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            flex-shrink: 0;
+        }
+        .demo-banner h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #e0e0e0;
+        }
+        .demo-banner h1 span { color: #4ecdc4; }
+        .demo-badge {
+            background: rgba(78,205,196,0.15);
+            color: #4ecdc4;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 12px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .demo-player {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        #player-root {
+            width: 100%;
+            height: 100%;
+        }
+        .player-shell {
+            max-width: 100% !important;
+            width: 100% !important;
+            height: 100% !important;
+            aspect-ratio: unset !important;
+        }
+        .demo-info {
+            background: #111;
+            padding: 8px 20px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            flex-shrink: 0;
+            font-size: 11px;
+            color: #888;
+        }
+        .demo-info .tag {
+            background: rgba(255,255,255,0.08);
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: #aaa;
+        }
+        .demo-info .tag.active { background: rgba(78,205,196,0.15); color: #4ecdc4; }
+    </style>
+</head>
+<body>
+    <div class="demo-wrapper">
+        <div class="demo-banner">
+            <h1>🔒 <span>VideoSecurity</span> — Protected Playback Demo</h1>
+            <span class="demo-badge">🛡️ All Security Layers Active</span>
+        </div>
+
+        <div class="demo-player">
+            <div id="player-root"
+                 data-video-id="@videoId"
+                 data-embed-session="@sessionJson"
+                 data-heartbeat-endpoint="/embed/heartbeat"
+                 data-events-endpoint="/api/security/video-events">
+                <div id="player-shell" class="player-shell">
+                    <div id="player-watermark" class="player-watermark" aria-hidden="true"></div>
+                    <iframe id="player-frame"
+                            title="Protected video player"
+                            src="about:blank"
+                            referrerpolicy="strict-origin-when-cross-origin"
+                            allow="encrypted-media; autoplay"
+                            sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>
+                    <div id="player-status" class="player-status" role="status"></div>
+                    <button type="button" id="btn-fullscreen" class="player-fs-btn" aria-label="Fullscreen">⛶</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="demo-info">
+            <span>Security features:</span>
+            <span class="tag active">✓ Embed Token Auth</span>
+            <span class="tag active">✓ CDN Token Auth</span>
+            <span class="tag active">✓ Forensic Watermark</span>
+            <span class="tag active">✓ Tamper Detection</span>
+            <span class="tag active">✓ Heartbeat Monitor</span>
+            <span class="tag active">✓ DRM (Widevine/FairPlay)</span>
+            <span class="tag active">✓ DevTools Detection</span>
+        </div>
+    </div>
+
+    <script src="/js/player.js"></script>
+    <script src="/js/embed-init.js"></script>
+</body>
+</html>
