@@ -52,12 +52,9 @@ public sealed class EmbedCodesController : Controller
             return RedirectToAction(nameof(Index));
         }
 
-        // Generate permanent embed token (expires=0)
-        var permanentToken = EmbedController.ComputeEmbedToken(opts.EmbedTokenKey, videoId, 0);
-
-        // Also generate a 24-hour token
-        var expires24h = DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds();
-        var token24h = EmbedController.ComputeEmbedToken(opts.EmbedTokenKey, videoId, expires24h);
+        // Generate a short-lived bearer embed token. Permanent public embeds are not allowed.
+        var expires15m = DateTimeOffset.UtcNow.AddMinutes(15).ToUnixTimeSeconds();
+        var token15m = EmbedController.ComputeEmbedToken(opts.EmbedTokenKey, videoId, expires15m);
 
         // Determine public base URL
         var publicBaseUrl = _config["Embed:PublicBaseUrl"];
@@ -65,21 +62,19 @@ public sealed class EmbedCodesController : Controller
             publicBaseUrl = $"{Request.Scheme}://{Request.Host}";
         publicBaseUrl = publicBaseUrl.TrimEnd('/');
 
-        var permanentUrl = $"{publicBaseUrl}/embed/{videoId}?token={permanentToken}&expires=0";
-        var timedUrl = $"{publicBaseUrl}/embed/{videoId}?token={token24h}&expires={expires24h}";
+        var timedUrl = $"{publicBaseUrl}/embed/{videoId}?token={token15m}&expires={expires15m}";
 
         ViewBag.Video = video;
-        ViewBag.PermanentUrl = permanentUrl;
         ViewBag.TimedUrl = timedUrl;
         ViewBag.PublicBaseUrl = publicBaseUrl;
-        ViewBag.PermanentHtml = BuildIframeHtml(permanentUrl);
         ViewBag.TimedHtml = BuildIframeHtml(timedUrl);
+        ViewBag.ExpiresAt = DateTimeOffset.FromUnixTimeSeconds(expires15m);
 
         return View();
     }
 
     private static string BuildIframeHtml(string url) =>
         $"<iframe src=\"{url}\" width=\"1280\" height=\"720\" frameborder=\"0\" " +
-        "allow=\"encrypted-media; autoplay\" allowfullscreen " +
+        "allow=\"encrypted-media; autoplay\" referrerpolicy=\"no-referrer\" " +
         "style=\"max-width:100%; aspect-ratio:16/9;\"></iframe>";
 }

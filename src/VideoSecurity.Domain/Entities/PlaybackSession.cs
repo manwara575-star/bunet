@@ -19,6 +19,7 @@ public class PlaybackSession
 
     public string? DeviceFingerprintHash { get; set; }
     public string? WatermarkPayloadHash { get; set; }
+    public string? HeartbeatTokenHash { get; set; }
     public DateTimeOffset? PlaybackStartedAt { get; set; }
     public double LastKnownPositionSeconds { get; set; }
     public DateTimeOffset? RevokedAt { get; set; }

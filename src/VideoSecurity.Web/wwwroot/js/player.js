@@ -325,7 +325,8 @@ window.VideoSecurity = window.VideoSecurity || {};
                 documentVisible: !document.hidden,
                 documentFocused: document.hasFocus(),
                 watermarkVisible: guard.isVisible(),
-                fullscreen: !!document.fullscreenElement
+                fullscreen: !!document.fullscreenElement,
+                heartbeatToken: session.heartbeatToken || null
             }, opts.antiForgery);
             lastPos += HB_MS / 1000;
         }, HB_MS);

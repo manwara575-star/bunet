@@ -1,11 +1,10 @@
 @{
     ViewData["Title"] = "Embed Code";
     var video = (VideoSecurity.Domain.Entities.Video)ViewBag.Video;
-    var permanentUrl = (string)ViewBag.PermanentUrl;
     var timedUrl = (string)ViewBag.TimedUrl;
-    var permanentHtml = (string)ViewBag.PermanentHtml;
     var timedHtml = (string)ViewBag.TimedHtml;
     var publicBaseUrl = (string)ViewBag.PublicBaseUrl;
+    var expiresAt = (DateTimeOffset)ViewBag.ExpiresAt;
 }
 
 <partial name="_AdminNav" />
@@ -19,6 +18,13 @@
     Heartbeat monitoring &bull; Risk scoring &bull; Auto-revocation &bull; DevTools detection
 </div>
 
+<div class="alert alert-danger">
+    <strong>Permanent public embeds are disabled.</strong>
+    Embed URLs are bearer access links and now expire quickly. Generate a fresh short-lived
+    link for each approved customer demo, and use only Bunny libraries with Direct Play OFF
+    and DRM active.
+</div>
+
 @if (publicBaseUrl.Contains("localhost"))
 {
     <div class="alert alert-warning">
@@ -30,31 +36,13 @@
 }
 
 <div class="row">
-    <div class="col-md-6">
-        <div class="card mb-4">
-            <div class="card-header bg-success text-white">
-                <strong>🔗 Permanent Embed (Recommended)</strong>
-            </div>
-            <div class="card-body">
-                <p class="text-muted">Link never expires. Each viewer gets a fresh 15-min playback session on load.</p>
-                <label class="form-label fw-bold">Embed URL:</label>
-                <div class="input-group mb-2">
-                    <input type="text" class="form-control form-control-sm" value="@permanentUrl" id="perm-url" readonly />
-                    <button class="btn btn-outline-primary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('perm-url').value)">Copy</button>
-                </div>
-                <label class="form-label fw-bold">HTML Embed Code:</label>
-                <textarea class="form-control form-control-sm" rows="4" id="perm-html" readonly>@permanentHtml</textarea>
-                <button class="btn btn-primary btn-sm mt-2" onclick="navigator.clipboard.writeText(document.getElementById('perm-html').value)">Copy HTML</button>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-6">
+    <div class="col-md-8">
         <div class="card mb-4">
             <div class="card-header bg-warning">
-                <strong>⏱ Time-Limited Embed (24 hours)</strong>
+                <strong>⏱ Short-Lived Embed (15 minutes)</strong>
             </div>
             <div class="card-body">
-                <p class="text-muted">Link expires in 24 hours. Use for temporary/preview sharing.</p>
+                <p class="text-muted">Link expires at @expiresAt.UtcDateTime.ToString("u"). Use for temporary/preview sharing only.</p>
                 <label class="form-label fw-bold">Embed URL:</label>
                 <div class="input-group mb-2">
                     <input type="text" class="form-control form-control-sm" value="@timedUrl" id="timed-url" readonly />
@@ -70,14 +58,14 @@
 
 <h4>Preview</h4>
 <div class="ratio ratio-16x9 mb-4" style="max-width:960px; border:2px solid #333;">
-    <iframe src="@permanentUrl" frameborder="0" allow="encrypted-media; autoplay" allowfullscreen></iframe>
+    <iframe src="@timedUrl" frameborder="0" allow="encrypted-media; autoplay" referrerpolicy="no-referrer"></iframe>
 </div>
 
 <h4>Instructions for cifm.polytronx.com</h4>
 <div class="card">
     <div class="card-body">
         <ol>
-            <li>Copy the <strong>Permanent Embed HTML</strong> code above.</li>
+            <li>Copy the <strong>short-lived embed HTML</strong> code above.</li>
             <li>Paste it into your website's HTML where you want the video to appear.</li>
             <li>Ensure the VideoSecurity app is accessible at <code>@publicBaseUrl</code> from the internet.</li>
             <li>
@@ -85,7 +73,9 @@
                 <ul>
                     <li>Stream Library &rarr; Security &rarr; <em>Allowed Referrer Domains</em>: add <code>cifm.polytronx.com</code></li>
                     <li>Stream Library &rarr; Security &rarr; <em>Token Authentication</em>: ON</li>
-                    <li>Stream Library &rarr; DRM &rarr; <em>MediaCage Basic</em>: ON</li>
+                    <li>Stream Library &rarr; Security &rarr; <em>Enable Direct Play</em>: OFF</li>
+                    <li>Stream Library &rarr; DRM &rarr; <em>MediaCage Basic or Enterprise DRM</em>: ON and active for this video</li>
+                    <li>Encoding &rarr; MP4 fallback, Early Play, and Keep Originals: OFF</li>
                 </ul>
             </li>
             <li>Test with <strong>Cococut</strong> — it should fail to find downloadable URLs.</li>

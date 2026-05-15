@@ -52,7 +52,13 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
         SecurityMetrics metrics)
         : this(db, entitlement, embedSigner, new StaticBunnyOptionsProvider(opts.Value), clock, policies, metrics) { }
 
-    public async Task<PlaybackSessionResponse> CreateAsync(string userId, Guid videoId, string ipAddress, string userAgent, CancellationToken ct)
+    public Task<PlaybackSessionResponse> CreateAsync(string userId, Guid videoId, string ipAddress, string userAgent, CancellationToken ct) =>
+        CreateAsync(userId, videoId, ipAddress, userAgent, maxSessionTtl: null, ct);
+
+    public Task<PlaybackSessionResponse> CreateAsync(string userId, Guid videoId, string ipAddress, string userAgent, TimeSpan maxSessionTtl, CancellationToken ct) =>
+        CreateAsync(userId, videoId, ipAddress, userAgent, (TimeSpan?)maxSessionTtl, ct);
+
+    private async Task<PlaybackSessionResponse> CreateAsync(string userId, Guid videoId, string ipAddress, string userAgent, TimeSpan? maxSessionTtl, CancellationToken ct)
     {
         var opts = await _options.GetAsync(ct);
         if (!await _entitlement.IsAuthorizedAsync(userId, videoId, ct))
@@ -82,6 +88,8 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
         var ttl = policy.EmbedTtlSeconds > 0
             ? TimeSpan.FromSeconds(policy.EmbedTtlSeconds)
             : opts.DefaultSessionTtl;
+        if (maxSessionTtl is { } cap && cap > TimeSpan.Zero && cap < ttl)
+            ttl = cap;
         var expires = now.Add(ttl);
 
         // Enforce concurrent-session limit per (user, video).

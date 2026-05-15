@@ -11,6 +11,7 @@ public interface IVideoEntitlementService
 public interface IPlaybackSessionService
 {
     Task<PlaybackSessionResponse> CreateAsync(string userId, Guid videoId, string ipAddress, string userAgent, CancellationToken ct);
+    Task<PlaybackSessionResponse> CreateAsync(string userId, Guid videoId, string ipAddress, string userAgent, TimeSpan maxSessionTtl, CancellationToken ct);
     Task<PlaybackSession?> GetAsync(Guid sessionId, CancellationToken ct);
     Task RecordHeartbeatAsync(HeartbeatRequest request, string userId, CancellationToken ct);
     Task RevokeAsync(Guid sessionId, string reason, CancellationToken ct);

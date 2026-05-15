@@ -1,14 +1,14 @@
-@using System.Text.Json
 @{
     Layout = null;
     var videoTitle = (string)ViewBag.VideoTitle;
     var videoId = (Guid)ViewBag.VideoId;
-    var sessionJson = (string)ViewBag.SessionJson;
+    var bootstrapId = (string)ViewBag.BootstrapId;
 }
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
+    <meta name="referrer" content="no-referrer" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>@videoTitle</title>
     <link rel="stylesheet" href="/css/player.css" />
@@ -36,7 +36,7 @@
 <body>
     <div id="player-root"
          data-video-id="@videoId"
-         data-embed-session="@sessionJson"
+         data-session-endpoint="/public-playback/bootstrap/@bootstrapId"
          data-heartbeat-endpoint="/embed/heartbeat"
          data-events-endpoint="/api/security/video-events">
         <div id="player-shell" class="player-shell">

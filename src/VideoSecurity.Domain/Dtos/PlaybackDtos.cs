@@ -4,7 +4,8 @@ public sealed record PlaybackSessionResponse(
     Guid SessionId,
     string EmbedUrl,
     DateTimeOffset ExpiresAt,
-    WatermarkPayload Watermark);
+    WatermarkPayload Watermark,
+    string? HeartbeatToken = null);
 
 public sealed record WatermarkPayload(
     string DisplayText,
@@ -19,7 +20,8 @@ public sealed record HeartbeatRequest(
     bool DocumentFocused,
     bool WatermarkVisible = true,
     bool Fullscreen = true,
-    string? DeviceFingerprint = null);
+    string? DeviceFingerprint = null,
+    string? HeartbeatToken = null);
 
 public sealed record SecurityEventRequest(
     Guid? SessionId,

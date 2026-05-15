@@ -105,6 +105,7 @@ builder.Services.AddRateLimiter(o =>
 // Background cleanup of expired playback sessions + stale telemetry.
 builder.Services.AddHostedService<ExpiredSessionCleanupService>();
 builder.Services.AddScoped<AuditLogger>();
+builder.Services.AddSingleton<PublicPlaybackBootstrapStore>();
 
 builder.Services.ConfigureApplicationCookie(o =>
 {

@@ -21,7 +21,7 @@ public sealed class SecurityHeadersMiddleware
         var ancestors = "'self'";
         foreach (var domain in allowed.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            ancestors += $" https://{domain} http://{domain}";
+            ancestors += $" https://{domain}";
         }
         _embedFrameAncestors = ancestors;
     }
@@ -30,6 +30,12 @@ public sealed class SecurityHeadersMiddleware
     {
         var h = ctx.Response.Headers;
         var isEmbedPath = ctx.Request.Path.StartsWithSegments("/embed");
+        var isPlaybackPath =
+            isEmbedPath ||
+            ctx.Request.Path.StartsWithSegments("/demo") ||
+            ctx.Request.Path.StartsWithSegments("/player/watch") ||
+            ctx.Request.Path.StartsWithSegments("/public-playback/bootstrap") ||
+            ctx.Request.Path.StartsWithSegments("/api/videos");
 
         // CSP: embed paths allow external framing; all others restrict to self.
         var frameAncestors = isEmbedPath ? _embedFrameAncestors : "'self'";
@@ -53,7 +59,12 @@ public sealed class SecurityHeadersMiddleware
             "display-capture=(), picture-in-picture=(), autoplay=(self), " +
             "camera=(), microphone=(), geolocation=(), encrypted-media=(self \"https://iframe.mediadelivery.net\")";
 
-        h["Referrer-Policy"] = "strict-origin-when-cross-origin";
+        h["Referrer-Policy"] = isPlaybackPath ? "no-referrer" : "strict-origin-when-cross-origin";
+        if (isPlaybackPath)
+        {
+            h["Cache-Control"] = "no-store, private";
+            h["Pragma"] = "no-cache";
+        }
         h["X-Content-Type-Options"] = "nosniff";
 
         // X-Frame-Options: only set SAMEORIGIN for non-embed paths.

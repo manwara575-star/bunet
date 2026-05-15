@@ -22,6 +22,9 @@ public class Video
     /// <summary>Always true in v1 — every video is DRM-protected.</summary>
     public bool IsProtected { get; set; } = true;
 
+    /// <summary>Allows this video to be exposed through the public sales/demo route.</summary>
+    public bool AllowPublicDemo { get; set; }
+
     public double DurationSeconds { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

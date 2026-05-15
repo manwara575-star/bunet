@@ -70,6 +70,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.UserAgentHash).HasMaxLength(128).IsRequired();
             e.Property(x => x.RevocationReason).HasMaxLength(256);
             e.Property(x => x.WatermarkPayload).HasMaxLength(512).IsRequired();
+            e.Property(x => x.HeartbeatTokenHash).HasMaxLength(128);
         });
 
         b.Entity<VideoProgress>(e =>

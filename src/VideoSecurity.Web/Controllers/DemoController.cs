@@ -3,11 +3,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using VideoSecurity.Domain.Abstractions;
-using VideoSecurity.Domain.Dtos;
 using VideoSecurity.Domain.Entities;
 using VideoSecurity.Infrastructure.Configuration;
 using VideoSecurity.Infrastructure.Persistence;
-using System.Text.Json;
+using VideoSecurity.Web.Services;
 
 namespace VideoSecurity.Web.Controllers;
 
@@ -20,19 +19,19 @@ namespace VideoSecurity.Web.Controllers;
 public sealed class DemoController : Controller
 {
     private readonly AppDbContext _db;
-    private readonly IPlaybackSessionService _sessions;
     private readonly IBunnyOptionsProvider _bunnyOptions;
+    private readonly PublicPlaybackBootstrapStore _bootstrapStore;
     private readonly ILogger<DemoController> _log;
 
     public DemoController(
         AppDbContext db,
-        IPlaybackSessionService sessions,
         IBunnyOptionsProvider bunnyOptions,
+        PublicPlaybackBootstrapStore bootstrapStore,
         ILogger<DemoController> log)
     {
         _db = db;
-        _sessions = sessions;
         _bunnyOptions = bunnyOptions;
+        _bootstrapStore = bootstrapStore;
         _log = log;
     }
 
@@ -41,8 +40,11 @@ public sealed class DemoController : Controller
     /// </summary>
     [HttpGet("/demo/{videoId:guid}")]
     [EnableRateLimiting("session-create")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<IActionResult> Watch(Guid videoId, CancellationToken ct)
     {
+        ApplyNoStoreHeaders();
+
         var opts = await _bunnyOptions.GetAsync(ct);
         if (string.IsNullOrEmpty(opts.EmbedTokenKey))
             return StatusCode(503, "Embed not configured.");
@@ -51,51 +53,23 @@ public sealed class DemoController : Controller
         if (video is null) return NotFound("Video not found.");
         if (video.Status != VideoStatus.Ready)
             return Content("Video is not ready for playback.", "text/plain");
-
-        // Derive a demo user ID from viewer IP for watermark / audit
-        var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        var ua = Request.Headers.UserAgent.ToString();
-        var demoUserId = "demo:" + EmbedController.ComputeEmbedToken(opts.EmbedTokenKey, videoId, 0)[..12];
-
-        // Ensure a temporary VideoAccessGrant exists
-        var now = DateTimeOffset.UtcNow;
-        var grantExpiry = now.Add(opts.DefaultSessionTtl).AddMinutes(5);
-        var hasGrant = await _db.VideoAccessGrants
-            .AsNoTracking()
-            .Where(g => g.UserId == demoUserId && g.VideoId == videoId && !g.Revoked)
-            .ToListAsync(ct);
-
-        if (!hasGrant.Any(g => g.ExpiresAt == null || g.ExpiresAt > now))
+        if (!video.AllowPublicDemo)
         {
-            _db.VideoAccessGrants.Add(new VideoAccessGrant
-            {
-                UserId = demoUserId,
-                VideoId = videoId,
-                ExpiresAt = grantExpiry
-            });
-            await _db.SaveChangesAsync(ct);
+            _log.LogWarning("Rejected public demo playback for non-demo video {VideoId}", videoId);
+            return StatusCode(403, "This video is not approved for public demo playback.");
         }
 
-        // Create a playback session
-        PlaybackSessionResponse session;
-        try
-        {
-            session = await _sessions.CreateAsync(demoUserId, videoId, ip, ua, ct);
-        }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "Failed to create demo session for video {VideoId}", videoId);
-            return StatusCode(500, "Failed to create playback session.");
-        }
-
-        ViewBag.Session = session;
-        ViewBag.SessionJson = JsonSerializer.Serialize(session, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        ViewBag.BootstrapId = _bootstrapStore.Create(videoId, PublicPlaybackKind.Demo);
         ViewBag.VideoTitle = video.Title;
         ViewBag.VideoId = videoId;
 
         return View();
+    }
+
+    private void ApplyNoStoreHeaders()
+    {
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers.Pragma = "no-cache";
+        Response.Headers["Referrer-Policy"] = "no-referrer";
     }
 }

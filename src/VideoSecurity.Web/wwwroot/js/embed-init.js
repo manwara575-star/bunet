@@ -4,11 +4,9 @@
     var root = document.getElementById('player-root');
     if (!root || !window.VideoSecurity) return;
 
-    var sessionData = JSON.parse(root.dataset.embedSession);
-
     VideoSecurity.startPlayer({
         videoId: root.dataset.videoId,
-        session: sessionData,
+        sessionEndpoint: root.dataset.sessionEndpoint,
         heartbeatEndpoint: root.dataset.heartbeatEndpoint,
         eventsEndpoint: root.dataset.eventsEndpoint,
         antiForgery: ''
