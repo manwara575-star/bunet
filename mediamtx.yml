@@ -1,0 +1,19 @@
+logLevel: info
+
+# Free self-hosted Secure WebRTC worker.
+# ASP.NET starts FFmpeg per secure playback session and publishes:
+#   rtsp://mediamtx:8554/{sessionId}
+# ASP.NET then proxies browser WHEP offers to:
+#   http://mediamtx:8889/{sessionId}/whep
+rtsp: yes
+rtspAddress: :8554
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigin: "*"
+webrtcLocalUDPAddress: :8189
+webrtcAdditionalHosts: []
+
+paths:
+  all:
+    source: publisher

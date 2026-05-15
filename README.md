@@ -1,17 +1,18 @@
 # VideoSecurity — Bunny Stream + ASP.NET Core
 
-Greenfield enterprise video security layer that uses **Bunny.net Stream** for upload,
-storage, transcoding, DRM playback, and CDN delivery. Built on **ASP.NET Core (.NET 10)**
-with EF Core (SQLite), ASP.NET Identity, and a Bunny **Embed-only** protected player.
+Greenfield enterprise video security layer that uses **Bunny.net Stream** for normal
+upload/storage/transcoding plus an optional self-hosted **Secure WebRTC** mode for
+high-security videos. Built on **ASP.NET Core (.NET 10)** with EF Core (SQLite),
+ASP.NET Identity, and a Bunny **Embed-only** protected player.
 
 > **Threat focus**
 > 1. **Stop CocoCut-style HLS / M3U8 / TS / MP4 downloading** — primary, hard goal.
 > 2. **Deter & trace screen recording** — best-effort browser hardening + visible
 >    moving forensic watermark (User ID + session marker + timestamp).
 >
-> Real screen-recording prevention requires Bunny **MediaCage Enterprise DRM**
-> (Widevine / FairPlay) and is documented as a future upgrade path. This codebase
-> targets Basic DRM + Embed-only playback today.
+> Real screen-recording prevention requires OS/vendor DRM. The free Secure WebRTC
+> path targets downloader-mode tools by removing HLS/DASH/MP4 URLs from the browser;
+> recordings are deterred/traced with watermarking.
 
 ## Architecture
 
@@ -35,10 +36,11 @@ tools/
 | No raw `.m3u8` / `.ts` / `.mp4` ever in app DOM/logs | `PlayerController` only renders an iframe shell; a short-lived Bunny Embed URL is fetched via `/api/videos/{id}/playback-session` and assigned to `iframe.src` from JS. | Verified by leak tests and authenticated playback tests. |
 | Signed Bunny **Embed Token** (SHA256) | `BunnyEmbedTokenSigner` | Per <https://docs.bunny.net/stream/token-authentication>. Library must have **MediaCage Basic DRM** + **Embed View Token Authentication** + **Block Direct URL File Access** + tight **Allowed Domains** + MP4 Fallback **off**. |
 | Signed Bunny **TUS upload** credentials | `BunnyTusUploadSigner` | `SHA256(libraryId + apiKey + expire + videoId)` per <https://docs.bunny.net/stream/tus-resumable-uploads>. Library API key never reaches the browser. |
+| Secure WebRTC mode for sensitive videos | `PlaybackProvider.SecureWebRtc`, `/api/secure-playback/{sessionId}/offer` | Stores the original file under protected server storage and proxies WebRTC offers to a configured WHEP-compatible worker. The browser receives signaling only; no `.m3u8`, `.ts`, `.m4s`, or `.mp4` URL is returned by the app. |
 | Optional **CDN Advanced Token** signer (HMAC-SHA256, `HS256-`, `token_path`) | `BunnyCdnTokenSigner` | Only used if a non-Embed CDN URL must ever be exposed; v1 player path never calls it. |
 | Server-side entitlement | `VideoEntitlementService` | Per-user, per-video and per-course grants with expiry + revocation. |
 | Short-lived playback session | `PlaybackSessionService` | Default TTL is 15 minutes, IP/UA are HMAC-hashed (never raw), heartbeat updates progress + risk score, revocation supported. Already-issued Bunny embed URLs remain bearer tokens until expiry. |
-| Hardening headers | `SecurityHeadersMiddleware` | CSP allows scripts from self only, `frame-src` whitelists `iframe.mediadelivery.net`, `media-src 'none'`, `Permissions-Policy: display-capture=()`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`. |
+| Hardening headers | `SecurityHeadersMiddleware` | CSP allows scripts from self only, `frame-src` whitelists `iframe.mediadelivery.net`, media is limited to self/blob for Secure WebRTC, `Permissions-Policy: display-capture=()`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`. |
 | Forensic watermark | `wwwroot/js/player.js` + `wwwroot/css/player.css` | Two semi-transparent spans drift across the player every ~3.5s with `User · Session · UTC time`. App-level fullscreen keeps watermark above the iframe. |
 | Webhook auth | `BunnyWebhookController` | Fails closed. Accepts Bunny Stream HMAC headers or a configured `X-Bunny-Webhook-Secret`; validates library id, blocks status downgrades, and stores recent body hashes to ignore duplicate replays. |
 | Telemetry | `SecurityEventService` + `/api/security/video-events` | Records visibility loss, focus loss, dev-tools heuristic, suspected recording. Anonymous events are rate-limited and cannot attach arbitrary session/video ids. |
@@ -61,9 +63,18 @@ dotnet user-secrets set "Bunny:PrivacyHashPepper" "<long-random>"           # re
 dotnet user-secrets set "Bunny:WebhookSecret"  "<long-random>"              # custom fallback; Bunny signed headers also supported
 dotnet user-secrets set "Seed:AdminEmail"      "you@example.com"
 dotnet user-secrets set "Seed:AdminPassword"   "<strong-password>"
+dotnet user-secrets set "ProtectedMedia:RootPath" "C:\secure-video-sources"
+dotnet user-secrets set "SecurePlayback:Enabled" "true"
+dotnet user-secrets set "SecurePlayback:WhepEndpointTemplate" "http://localhost:8889/{sessionId}/whep"
+dotnet user-secrets set "SecurePlayback:StartFfmpegOnSessionCreate" "true"
+dotnet user-secrets set "SecurePlayback:RtspPublishUrlTemplate" "rtsp://localhost:8554/{sessionId}"
+dotnet user-secrets set "SecurePlayback:BurnWatermark" "true"
 ```
 
 Startup fails fast when required Bunny settings are missing or still set to placeholders.
+Secure WebRTC session creation also fails closed unless `SecurePlayback:Enabled`,
+`SecurePlayback:WhepEndpointTemplate`, burned watermarking, and the protected
+source file are all valid.
 
 The Bunny library itself must be configured (manually in the Bunny dashboard) with:
 
@@ -89,6 +100,7 @@ Visit:
 - `/Identity/Account/Login` — sign in (admin seeded if `Seed:*` set)
 - `/admin`                  — admin video list + grant access
 - `/admin/upload`           — TUS upload to Bunny
+- `/admin/upload`           — also supports Secure WebRTC source upload to protected storage
 - `/player/watch/{guid}`    — protected player (auth + entitlement required)
 - `/swagger`                — API explorer (Development only)
 
@@ -97,6 +109,8 @@ Visit:
 | Method | Route | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/admin/videos` | Admin | Create Bunny video object + return TUS upload credentials |
+| POST | `/api/admin/videos/secure` | Admin | Create Secure WebRTC video + upload original source into protected storage |
+| POST | `/api/admin/videos/{id}/protected-source` | Admin | Attach/replace protected source for Secure WebRTC playback |
 | GET  | `/api/admin/videos/{id}` | Admin | Read local + (best-effort) Bunny status |
 | GET  | `/api/admin/videos` | Admin | List videos |
 | DELETE | `/api/admin/videos/{id}` | Admin | Soft-delete locally + delete in Bunny |
@@ -105,6 +119,7 @@ Visit:
 | GET | `/api/me/videos` | User | List videos the signed-in user may watch |
 | GET | `/api/me/progress/{videoId}` | User | Read current progress for a video |
 | POST | `/api/videos/{id}/playback-session` | User | Returns `{sessionId, embedUrl, expiresAt, watermark}` |
+| POST | `/api/secure-playback/{sessionId}/offer` | User | Validates session and proxies a WebRTC/WHEP SDP offer to the configured worker |
 | POST | `/api/videos/heartbeat` | User | Updates session + progress + risk score |
 | POST | `/api/security/video-events` | Anon | Records best-effort security telemetry |
 | POST | `/api/webhooks/bunny/stream` | Bunny signature/secret | Updates local video status |
@@ -115,9 +130,8 @@ Visit:
 
 - It does **not** prevent screen recording from a determined user on a normal browser.
   No web-only solution can. Visible watermark + Bunny Embed DRM is the deterrent.
-- It does **not** ship a Shaka / hls.js player. MediaCage Basic requires Bunny's
-  Embed View. A custom DRM player is only relevant if you upgrade to **MediaCage
-  Enterprise DRM** (Widevine + FairPlay) and pursue OS-level output protection.
+- Secure WebRTC mode does **not** make video unrecordable. It is designed to make
+  CocoCut-style normal download mode fail by avoiding HLS/DASH/MP4 delivery.
 
 ## Pre-upload watermark helper
 
@@ -134,13 +148,21 @@ docker compose up -d --build
 Pass real Bunny secrets via an `.env` file (matching the variable names in `docker-compose.yml`).
 **Never** commit that file.
 
+Compose also starts a free self-hosted MediaMTX worker for Secure WebRTC mode.
+By default the web container publishes protected sources with FFmpeg to
+`rtsp://mediamtx:8554/{sessionId}` and proxies WHEP offers to
+`http://mediamtx:8889/{sessionId}/whep`. Only MediaMTX UDP `8189` is published
+for browser WebRTC media. For anything beyond local Docker, set
+`MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS` to the public hostname/IP that browsers can
+reach.
+
 `docker-compose.yml` disables HTTPS redirection only so the sample container is reachable on local HTTP port 8080. Put TLS in front for production and send `X-Forwarded-Proto=https` from the reverse proxy.
 
 ## Tests
 
 | Suite | Command |
 |---|---|
-| Unit + Integration | `dotnet test VideoSecurity.slnx` (73 tests at last verification) |
+| Unit + Integration | `dotnet test VideoSecurity.slnx` |
 | Playwright E2E | `cd tests/e2e; npm ci; npx playwright install --with-deps chromium; npx playwright test` |
 
 CI: `.github/workflows/ci.yml` runs both on push/PR.
@@ -166,6 +188,15 @@ consumed by `docker-compose.yml` (or the equivalent secret store on your platfor
 | `Bunny__CdnTokenKey` | optional | Only needed for Advanced URL token signing. |
 | `Bunny__PrivacyHashPepper` | strongly recommended | 32+ char random secret for IP/UA audit hashing. Startup logs a warning if missing. |
 | `Bunny__WebhookSecret` | recommended | Custom shared secret for the Bunny webhook fallback verifier. |
+| `ProtectedMedia__RootPath` | yes for Secure WebRTC | Private source-file root outside `wwwroot`; Compose sets `/data/protected-media`. |
+| `ProtectedMedia__MaxSourceBytes` | yes for Secure WebRTC | Maximum protected source upload size; Compose default is 10 GB. |
+| `SecurePlayback__Enabled` | yes for Secure WebRTC | Must be `true` before Secure WebRTC sessions can be created. |
+| `SecurePlayback__WhepEndpointTemplate` | yes for Secure WebRTC | WHEP worker URL, e.g. `http://mediamtx:8889/{sessionId}/whep` in Compose. |
+| `SecurePlayback__StartFfmpegOnSessionCreate` | recommended | Compose default is `true`; starts one FFmpeg publisher per secure session. |
+| `SecurePlayback__RtspPublishUrlTemplate` | yes when FFmpeg start is enabled | RTSP publish URL, e.g. `rtsp://mediamtx:8554/{sessionId}`. |
+| `SecurePlayback__BurnWatermark` | yes for Secure WebRTC | Must stay `true`; the app rejects Secure WebRTC sessions if burned watermarking is disabled. |
+| `MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS` | yes outside local Docker | Browser-reachable hostname/IP advertised in MediaMTX WebRTC ICE candidates. |
+| `MEDIAMTX_WEBRTC_UDP_PORT` | yes for Secure WebRTC | Public UDP port for WebRTC media; default `8189/udp`. |
 | `Hosting__DisableHttpsRedirection` | situational | `true` only when TLS terminates at a proxy that forwards `X-Forwarded-Proto=https`. |
 | `Seed__AdminEmail` / `Seed__AdminPassword` | first boot only | Used by `IdentitySeeder` to create the first admin. Rotate immediately after first login. |
 
@@ -204,9 +235,9 @@ Re-link to the dashboard checklist in [Configuration](#configuration):
 | Liveness | `GET /health/live` | Process is up. |
 | Readiness | `GET /health/ready` | SQLite reachable + **no pending EF Core migrations** (via `AppMigrationHealthCheck`). |
 
-`docker-compose.yml` polls `/health/ready` every 30 s with `wget`. The Dockerfile
-itself omits a `HEALTHCHECK` because the `aspnet:10.0` base image does not ship
-`curl`/`wget`; rely on the orchestrator (Compose / Kubernetes) instead.
+`docker-compose.yml` polls `/health/ready` every 30 s with `curl`; the Dockerfile
+installs `curl` and `ffmpeg` in the final image for health checks and Secure
+WebRTC worker publishing.
 
 ### Metrics scraping
 

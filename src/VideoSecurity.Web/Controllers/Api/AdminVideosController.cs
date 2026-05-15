@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using VideoSecurity.Domain.Abstractions;
 using VideoSecurity.Domain.Dtos;
 using VideoSecurity.Domain.Entities;
@@ -20,6 +21,8 @@ public sealed class AdminVideosController : ControllerBase
     private readonly IBunnyStreamClient _bunny;
     private readonly IBunnyTusUploadSigner _tus;
     private readonly IBunnyOptionsProvider _options;
+    private readonly IProtectedMediaStorage _protectedMedia;
+    private readonly ProtectedMediaOptions _protectedMediaOptions;
     private readonly IAuditLogService _audit;
     private readonly ILogger<AdminVideosController> _logger;
 
@@ -28,12 +31,16 @@ public sealed class AdminVideosController : ControllerBase
     private const long DefaultMaxFileSizeBytes = 10L * 1024 * 1024 * 1024; // 10 GB
 
     public AdminVideosController(AppDbContext db, IBunnyStreamClient bunny, IBunnyTusUploadSigner tus,
-        IBunnyOptionsProvider options, IAuditLogService audit, ILogger<AdminVideosController> logger)
+        IBunnyOptionsProvider options, IProtectedMediaStorage protectedMedia,
+        IOptions<ProtectedMediaOptions> protectedMediaOptions, IAuditLogService audit,
+        ILogger<AdminVideosController> logger)
     {
         _db = db;
         _bunny = bunny;
         _tus = tus;
         _options = options;
+        _protectedMedia = protectedMedia;
+        _protectedMediaOptions = protectedMediaOptions.Value;
         _audit = audit;
         _logger = logger;
     }
@@ -51,6 +58,13 @@ public sealed class AdminVideosController : ControllerBase
         string BunnyVideoId,
         long LibraryId,
         BunnyTusUploadCredentials Upload);
+
+    public sealed record ProtectedSourceUploadResponse(
+        Guid VideoId,
+        string PlaybackProvider,
+        string ProtectedMediaStatus,
+        string OriginalFileName,
+        long SizeBytes);
 
     [HttpPost]
     public async Task<ActionResult<CreateVideoResponse>> Create([FromBody] CreateVideoRequest req, CancellationToken ct)
@@ -105,6 +119,78 @@ public sealed class AdminVideosController : ControllerBase
         return Ok(new CreateVideoResponse(entity.Id, entity.BunnyVideoId, entity.BunnyLibraryId, creds));
     }
 
+    [HttpPost("secure")]
+    [RequestSizeLimit(DefaultMaxFileSizeBytes)]
+    public async Task<ActionResult<ProtectedSourceUploadResponse>> CreateSecure(
+        [FromForm, Required, StringLength(512, MinimumLength = 1)] string title,
+        [FromForm] string? description,
+        [FromForm] string? courseId,
+        [FromForm, Required] IFormFile file,
+        CancellationToken ct)
+    {
+        if (!ModelState.IsValid) return ValidationProblem(ModelState);
+        if (ValidateProtectedSource(file) is { } validation) return validation;
+
+        var actor = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
+        var entity = new Video
+        {
+            Title = title,
+            Description = description,
+            CourseId = courseId,
+            BunnyLibraryId = 0,
+            BunnyVideoId = "local-" + Guid.NewGuid().ToString("N"),
+            PlaybackProvider = PlaybackProvider.SecureWebRtc,
+            Status = VideoStatus.Uploading,
+            ProtectedMediaStatus = ProtectedMediaStatus.None,
+            CreatedByUserId = actor
+        };
+
+        _db.Videos.Add(entity);
+        await _db.SaveChangesAsync(ct);
+
+        var response = await SaveProtectedSourceAsync(entity, file, ct);
+        var opts = await _options.GetAsync(ct);
+        await _audit.WriteAsync(
+            actor,
+            AuditAction.VideoCreated,
+            nameof(Video),
+            entity.Id.ToString(),
+            new { entity.Title, entity.PlaybackProvider, response.OriginalFileName },
+            AuditHashing.HashIp(opts, HttpContext),
+            AuditHashing.HashUa(opts, HttpContext),
+            ct);
+
+        return Ok(response);
+    }
+
+    [HttpPost("{id:guid}/protected-source")]
+    [RequestSizeLimit(DefaultMaxFileSizeBytes)]
+    public async Task<ActionResult<ProtectedSourceUploadResponse>> UploadProtectedSource(
+        Guid id,
+        [FromForm, Required] IFormFile file,
+        CancellationToken ct)
+    {
+        if (!ModelState.IsValid) return ValidationProblem(ModelState);
+        if (ValidateProtectedSource(file) is { } validation) return validation;
+
+        var video = await _db.Videos.FirstOrDefaultAsync(v => v.Id == id, ct);
+        if (video is null) return NotFound();
+
+        var response = await SaveProtectedSourceAsync(video, file, ct);
+        var opts = await _options.GetAsync(ct);
+        await _audit.WriteAsync(
+            User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "system",
+            AuditAction.PolicyChanged,
+            nameof(Video),
+            video.Id.ToString(),
+            new { video.Title, video.PlaybackProvider, response.OriginalFileName },
+            AuditHashing.HashIp(opts, HttpContext),
+            AuditHashing.HashUa(opts, HttpContext),
+            ct);
+
+        return Ok(response);
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<ActionResult> Get(Guid id, CancellationToken ct)
     {
@@ -113,6 +199,11 @@ public sealed class AdminVideosController : ControllerBase
 
         try
         {
+            if (v.PlaybackProvider == PlaybackProvider.SecureWebRtc)
+            {
+                return Ok(ToAdminDto(v));
+            }
+
             var info = await _bunny.GetVideoAsync(v.BunnyVideoId, ct);
             var newStatus = MapBunnyStatus(info.Status);
             if (newStatus != v.Status || Math.Abs(info.Length - v.DurationSeconds) > 0.01)
@@ -127,19 +218,7 @@ public sealed class AdminVideosController : ControllerBase
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Best-effort Bunny status refresh failed for video {VideoId}", id); }
 
-        return Ok(new
-        {
-            v.Id,
-            v.Title,
-            v.Description,
-            v.CourseId,
-            v.Status,
-            v.DurationSeconds,
-            v.BunnyVideoId,
-            v.BunnyLibraryId,
-            v.CreatedAt,
-            v.UpdatedAt
-        });
+        return Ok(ToAdminDto(v));
     }
 
     [HttpGet]
@@ -147,7 +226,7 @@ public sealed class AdminVideosController : ControllerBase
     {
         take = Math.Clamp(take, 1, 200);
         var items = await _db.Videos.AsNoTracking()
-            .Select(v => new { v.Id, v.Title, v.Status, v.DurationSeconds, v.CreatedAt, v.CourseId })
+            .Select(v => new { v.Id, v.Title, v.Status, v.DurationSeconds, v.CreatedAt, v.CourseId, v.PlaybackProvider, v.ProtectedMediaStatus })
             .ToListAsync(ct);
         items = items.OrderByDescending(v => v.CreatedAt).Skip(skip).Take(take).ToList();
         return Ok(items);
@@ -158,8 +237,11 @@ public sealed class AdminVideosController : ControllerBase
     {
         var v = await _db.Videos.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (v is null) return NotFound();
-        try { await _bunny.DeleteVideoAsync(v.BunnyVideoId, ct); }
-        catch (Exception ex) { _logger.LogWarning(ex, "Best-effort Bunny delete failed for {BunnyVideoId}", v.BunnyVideoId); }
+        if (v.PlaybackProvider == PlaybackProvider.BunnyStream)
+        {
+            try { await _bunny.DeleteVideoAsync(v.BunnyVideoId, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Best-effort Bunny delete failed for {BunnyVideoId}", v.BunnyVideoId); }
+        }
         v.Status = VideoStatus.Deleted;
         v.UpdatedAt = DateTimeOffset.UtcNow;
         await _db.SaveChangesAsync(ct);
@@ -175,6 +257,75 @@ public sealed class AdminVideosController : ControllerBase
             ct);
         return NoContent();
     }
+
+    private async Task<ProtectedSourceUploadResponse> SaveProtectedSourceAsync(Video video, IFormFile file, CancellationToken ct)
+    {
+        await using var source = file.OpenReadStream();
+        var saved = await _protectedMedia.SaveSourceAsync(video.Id, file.FileName, file.ContentType, source, ct);
+
+        video.PlaybackProvider = PlaybackProvider.SecureWebRtc;
+        video.ProtectedMediaStatus = ProtectedMediaStatus.SourceUploaded;
+        video.ProtectedSourcePath = saved.RelativePath;
+        video.ProtectedSourceOriginalFileName = saved.OriginalFileName;
+        video.ProtectedSourceContentType = saved.ContentType;
+        video.ProtectedSourceSizeBytes = saved.SizeBytes;
+        video.ProtectedSourceUploadedAt = DateTimeOffset.UtcNow;
+        video.Status = VideoStatus.Ready;
+        video.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _db.SaveChangesAsync(ct);
+
+        return new ProtectedSourceUploadResponse(
+            video.Id,
+            video.PlaybackProvider.ToString(),
+            video.ProtectedMediaStatus.ToString(),
+            saved.OriginalFileName,
+            saved.SizeBytes);
+    }
+
+    private ActionResult? ValidateProtectedSource(IFormFile file)
+    {
+        if (file is null || file.Length <= 0)
+        {
+            ModelState.AddModelError("file", "A non-empty source video file is required.");
+            return ValidationProblem(ModelState);
+        }
+
+        var ext = Path.GetExtension(file.FileName);
+        if (string.IsNullOrWhiteSpace(ext) ||
+            !_protectedMediaOptions.AllowedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
+        {
+            ModelState.AddModelError("file", $"File type '{ext}' is not allowed.");
+            return ValidationProblem(ModelState);
+        }
+
+        if (file.Length > _protectedMediaOptions.MaxSourceBytes)
+        {
+            ModelState.AddModelError("file", "Source file exceeds the configured maximum size.");
+            return ValidationProblem(ModelState);
+        }
+
+        return null;
+    }
+
+    private static object ToAdminDto(Video v) => new
+    {
+        v.Id,
+        v.Title,
+        v.Description,
+        v.CourseId,
+        v.Status,
+        v.DurationSeconds,
+        v.BunnyVideoId,
+        v.BunnyLibraryId,
+        PlaybackProvider = v.PlaybackProvider.ToString(),
+        ProtectedMediaStatus = v.ProtectedMediaStatus.ToString(),
+        v.ProtectedSourceOriginalFileName,
+        v.ProtectedSourceSizeBytes,
+        v.ProtectedSourceUploadedAt,
+        v.CreatedAt,
+        v.UpdatedAt
+    };
 
     private static VideoStatus MapBunnyStatus(int code) => code switch
     {

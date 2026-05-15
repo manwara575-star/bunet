@@ -16,7 +16,7 @@ ENV ASPNETCORE_URLS=http://+:8080 \
 EXPOSE 8080
 COPY --from=build /app/publish ./
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl ffmpeg && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /data /data/dp-keys && chown -R app:app /data /app
 USER app
 ENV DataProtection__Path=/data/dp-keys

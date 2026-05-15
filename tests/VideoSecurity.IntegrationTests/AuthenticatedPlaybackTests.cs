@@ -1,19 +1,27 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using VideoSecurity.Domain.Abstractions;
 using VideoSecurity.Domain.Dtos;
 using VideoSecurity.Domain.Entities;
 using VideoSecurity.Infrastructure.Persistence;
 using VideoSecurity.Web;
+using WireMock.RequestBuilders;
+using WireMock.ResponseBuilders;
 
 namespace VideoSecurity.IntegrationTests;
 
@@ -68,9 +76,7 @@ public sealed class AuthenticatedPlaybackTests : IClassFixture<BunnyMockFactory>
         html.Should().Contain("name=\"__RequestVerificationToken\"");
         html.IndexOf("name=\"__RequestVerificationToken\"", StringComparison.Ordinal)
             .Should().BeLessThan(html.IndexOf("/js/watch-page.js", StringComparison.Ordinal));
-        html.Should().NotContain(".m3u8");
-        html.Should().NotContain(".mp4");
-        html.Should().NotContain("b-cdn.net");
+        AssertNoDownloadableUrls(html);
         html.Should().NotContain($"/embed/12345/{bunnyVideoId}");
         html.Should().NotContain("allowfullscreen");
 
@@ -84,7 +90,7 @@ public sealed class AuthenticatedPlaybackTests : IClassFixture<BunnyMockFactory>
         session.Should().NotBeNull();
         session!.EmbedUrl.Should().StartWith($"https://iframe.mediadelivery.net/embed/12345/{bunnyVideoId}?token=");
         session.EmbedUrl.Should().NotContain("sid=");
-        session.EmbedUrl.Should().NotContain("b-cdn.net");
+        AssertNoDownloadableUrls(session.EmbedUrl!);
 
         var heartbeat = new HttpRequestMessage(HttpMethod.Post, "/api/videos/heartbeat")
         {
@@ -123,6 +129,311 @@ public sealed class AuthenticatedPlaybackTests : IClassFixture<BunnyMockFactory>
     client.BaseAddress = new Uri("https://localhost");
         var resp = await client.PostAsync($"/api/videos/{Guid.NewGuid()}/playback-session", null);
         resp.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task SecureWebRtcSession_DoesNotReturnDownloadableMediaUrls_AndRequiresHeartbeatToken()
+    {
+        await using var factory = AuthenticatedFactory();
+        var videoId = Guid.NewGuid();
+        string sourcePath;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var storage = scope.ServiceProvider.GetRequiredService<IProtectedMediaStorage>();
+            await using var source = new MemoryStream([1, 2, 3, 4]);
+            var saved = await storage.SaveSourceAsync(videoId, "secure.mp4", "video/mp4", source, default);
+            sourcePath = saved.RelativePath;
+
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Videos.Add(new Video
+            {
+                Id = videoId,
+                Title = "Secure WebRTC",
+                BunnyLibraryId = 0,
+                BunnyVideoId = "local-" + videoId.ToString("N"),
+                PlaybackProvider = PlaybackProvider.SecureWebRtc,
+                ProtectedMediaStatus = ProtectedMediaStatus.SourceUploaded,
+                ProtectedSourcePath = sourcePath,
+                ProtectedSourceOriginalFileName = saved.OriginalFileName,
+                ProtectedSourceContentType = saved.ContentType,
+                ProtectedSourceSizeBytes = saved.SizeBytes,
+                ProtectedSourceUploadedAt = DateTimeOffset.UtcNow,
+                Status = VideoStatus.Ready,
+                CreatedByUserId = TestAuthHandler.UserId,
+                DurationSeconds = 120
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        client.BaseAddress = new Uri("https://localhost");
+        var watch = await client.GetAsync($"/player/watch/{videoId}");
+        watch.EnsureSuccessStatusCode();
+        var html = await watch.Content.ReadAsStringAsync();
+        html.Should().Contain("id=\"player-video\"");
+        AssertNoDownloadableUrls(html);
+
+        var token = ExtractAntiforgeryToken(html);
+        var sessionReq = new HttpRequestMessage(HttpMethod.Post, $"/api/videos/{videoId}/playback-session");
+        sessionReq.Headers.Add("RequestVerificationToken", token);
+        var sessionResp = await client.SendAsync(sessionReq);
+        sessionResp.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, await sessionResp.Content.ReadAsStringAsync());
+        var sessionBody = await sessionResp.Content.ReadAsStringAsync();
+        AssertNoDownloadableUrls(sessionBody);
+
+        var session = await sessionResp.Content.ReadFromJsonAsync<PlaybackSessionResponse>();
+        session.Should().NotBeNull();
+        session!.PlaybackProvider.Should().Be(nameof(PlaybackProvider.SecureWebRtc));
+        session.EmbedUrl.Should().BeNull();
+        session.HeartbeatToken.Should().NotBeNullOrWhiteSpace();
+        session.SecurePlayback.Should().NotBeNull();
+        session.SecurePlayback!.OfferEndpoint.Should().Be($"/api/secure-playback/{session.SessionId}/offer");
+
+        var missingHeartbeatToken = new HttpRequestMessage(HttpMethod.Post, "/api/videos/heartbeat")
+        {
+            Content = JsonContent.Create(new
+            {
+                sessionId = session.SessionId,
+                positionSeconds = 1,
+                documentVisible = true,
+                documentFocused = true
+            })
+        };
+        missingHeartbeatToken.Headers.Add("RequestVerificationToken", token);
+        var missingHeartbeatResp = await client.SendAsync(missingHeartbeatToken);
+        missingHeartbeatResp.StatusCode.Should().Be(System.Net.HttpStatusCode.Forbidden);
+
+        var heartbeat = new HttpRequestMessage(HttpMethod.Post, "/api/videos/heartbeat")
+        {
+            Content = JsonContent.Create(new
+            {
+                sessionId = session.SessionId,
+                positionSeconds = 2,
+                documentVisible = true,
+                documentFocused = true,
+                heartbeatToken = session.HeartbeatToken
+            })
+        };
+        heartbeat.Headers.Add("RequestVerificationToken", token);
+        var hbResp = await client.SendAsync(heartbeat);
+        hbResp.StatusCode.Should().Be(System.Net.HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task SecureWebRtcSession_FailsClosed_WhenWorkerIsNotConfigured()
+    {
+        await using var factory = AuthenticatedFactory(configureSecurePlayback: false);
+        var videoId = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var storage = scope.ServiceProvider.GetRequiredService<IProtectedMediaStorage>();
+            await using var source = new MemoryStream([1, 2, 3, 4]);
+            var saved = await storage.SaveSourceAsync(videoId, "secure.mp4", "video/mp4", source, default);
+
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Videos.Add(new Video
+            {
+                Id = videoId,
+                Title = "Secure WebRTC",
+                BunnyLibraryId = 0,
+                BunnyVideoId = "local-" + videoId.ToString("N"),
+                PlaybackProvider = PlaybackProvider.SecureWebRtc,
+                ProtectedMediaStatus = ProtectedMediaStatus.SourceUploaded,
+                ProtectedSourcePath = saved.RelativePath,
+                Status = VideoStatus.Ready,
+                CreatedByUserId = TestAuthHandler.UserId
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        client.BaseAddress = new Uri("https://localhost");
+        var html = await client.GetStringAsync($"/player/watch/{videoId}");
+        var token = ExtractAntiforgeryToken(html);
+
+        var sessionReq = new HttpRequestMessage(HttpMethod.Post, $"/api/videos/{videoId}/playback-session");
+        sessionReq.Headers.Add("RequestVerificationToken", token);
+        var resp = await client.SendAsync(sessionReq);
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Conflict);
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain("Secure WebRTC playback is not configured");
+        AssertNoDownloadableUrls(body);
+    }
+
+    [Fact]
+    public async Task SecureWebRtcOffer_RejectsMissingToken()
+    {
+        await using var factory = AuthenticatedFactory();
+        var (client, token, session) = await CreateSecureWebRtcSessionAsync(factory);
+
+        var offer = CreateOfferRequest(session.SecurePlayback!.OfferEndpoint, token);
+        var resp = await client.SendAsync(offer);
+
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task SecureWebRtcOffer_RejectsWrongUser()
+    {
+        await using var factory = AuthenticatedFactory();
+        var (client, token, session) = await CreateSecureWebRtcSessionAsync(factory);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+            stored.UserId = "other-user";
+            await db.SaveChangesAsync();
+        }
+
+        var offer = CreateOfferRequest(session.SecurePlayback!.OfferEndpoint, token, session.HeartbeatToken);
+        var resp = await client.SendAsync(offer);
+
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task SecureWebRtcOffer_RejectsExpiredSession()
+    {
+        await using var factory = AuthenticatedFactory();
+        var (client, token, session) = await CreateSecureWebRtcSessionAsync(factory);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+            stored.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        var offer = CreateOfferRequest(session.SecurePlayback!.OfferEndpoint, token, session.HeartbeatToken);
+        var resp = await client.SendAsync(offer);
+
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Conflict);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("expired");
+    }
+
+    [Fact]
+    public async Task SecureWebRtcOffer_RejectsRevokedSession()
+    {
+        await using var factory = AuthenticatedFactory();
+        var (client, token, session) = await CreateSecureWebRtcSessionAsync(factory);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+            stored.Revoked = true;
+            stored.RevokedAt = DateTimeOffset.UtcNow;
+            stored.RevocationReason = "test";
+            await db.SaveChangesAsync();
+        }
+
+        var offer = CreateOfferRequest(session.SecurePlayback!.OfferEndpoint, token, session.HeartbeatToken);
+        var resp = await client.SendAsync(offer);
+
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Conflict);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("revoked");
+    }
+
+    [Fact]
+    public async Task SecureWebRtcOffer_RejectsInvalidProtectedSourcePath()
+    {
+        await using var factory = AuthenticatedFactory();
+        var (client, token, session) = await CreateSecureWebRtcSessionAsync(factory);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+            var video = await db.Videos.SingleAsync(v => v.Id == stored.VideoId);
+            video.ProtectedSourcePath = Path.Combine("..", "escape.mp4");
+            await db.SaveChangesAsync();
+        }
+
+        var offer = CreateOfferRequest(session.SecurePlayback!.OfferEndpoint, token, session.HeartbeatToken);
+        var resp = await client.SendAsync(offer);
+
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Conflict);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("invalid");
+    }
+
+    [Fact]
+    public async Task SecureWebRtcOffer_ProxiesWhepAnswer_WhenWorkerAccepts()
+    {
+        await using var factory = AuthenticatedFactory();
+        var (client, token, session) = await CreateSecureWebRtcSessionAsync(factory);
+        var answerSdp = "v=0\r\ns=secure-answer\r\n";
+        _f.Bunny
+            .Given(Request.Create().WithPath($"/whep/{session.SessionId:N}").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/sdp")
+                .WithBody(answerSdp));
+
+        var offer = CreateOfferRequest(session.SecurePlayback!.OfferEndpoint, token, session.HeartbeatToken);
+        var resp = await client.SendAsync(offer);
+        var body = await resp.Content.ReadAsStringAsync();
+
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, body);
+        AssertNoDownloadableUrls(body);
+        var result = JsonSerializer.Deserialize<SecurePlaybackAnswerResponse>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        result.Should().NotBeNull();
+        result!.Type.Should().Be("answer");
+        result.Sdp.Should().Be(answerSdp);
+    }
+
+    [Fact]
+    public async Task SecureWebRtcHeartbeatRiskRevocation_StopsWorker()
+    {
+        await using var factory = AuthenticatedFactory(useRecordingWorker: true);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var policy = await db.VideoSecurityPolicies.SingleOrDefaultAsync(p => p.Tier == VideoSensitivityTier.Standard);
+            if (policy is null)
+            {
+                db.VideoSecurityPolicies.Add(new VideoSecurityPolicy
+                {
+                    Tier = VideoSensitivityTier.Standard,
+                    RequireWatermark = true,
+                    AutoRevokeRiskThreshold = 10
+                });
+            }
+            else
+            {
+                policy.RequireWatermark = true;
+                policy.AutoRevokeRiskThreshold = 10;
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var (client, token, session) = await CreateSecureWebRtcSessionAsync(factory);
+        var worker = factory.Services.GetRequiredService<RecordingSecureMediaWorker>();
+        worker.StartedSessions.Should().Contain(session.SessionId);
+
+        var heartbeat = new HttpRequestMessage(HttpMethod.Post, "/api/videos/heartbeat")
+        {
+            Content = JsonContent.Create(new
+            {
+                sessionId = session.SessionId,
+                positionSeconds = 3,
+                documentVisible = true,
+                documentFocused = true,
+                watermarkVisible = false,
+                heartbeatToken = session.HeartbeatToken
+            })
+        };
+        heartbeat.Headers.Add("RequestVerificationToken", token);
+        var hbResp = await client.SendAsync(heartbeat);
+        hbResp.StatusCode.Should().Be(System.Net.HttpStatusCode.NoContent);
+
+        worker.StoppedSessions.Should().Contain(session.SessionId);
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stored = await verifyDb.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+        stored.Revoked.Should().BeTrue();
+        stored.RevocationReason.Should().Be("RiskAutoRevoke");
     }
 
     [Fact]
@@ -214,8 +525,20 @@ public sealed class AuthenticatedPlaybackTests : IClassFixture<BunnyMockFactory>
         watch.StatusCode.Should().Be(System.Net.HttpStatusCode.Forbidden);
     }
 
-    private WebApplicationFactory<Program> AuthenticatedFactory() => _f.WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> AuthenticatedFactory(
+        bool configureSecurePlayback = true,
+        bool useRecordingWorker = false) => _f.WithWebHostBuilder(builder =>
     {
+        builder.ConfigureAppConfiguration((_, cfg) =>
+        {
+            cfg.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["SecurePlayback:Enabled"] = configureSecurePlayback ? "true" : "false",
+                ["SecurePlayback:WhepEndpointTemplate"] = configureSecurePlayback ? $"{_f.Bunny.Url}/whep/{{sessionId}}" : "",
+                ["SecurePlayback:StartFfmpegOnSessionCreate"] = "false",
+                ["SecurePlayback:BurnWatermark"] = "true"
+            });
+        });
         builder.ConfigureTestServices(services =>
         {
             services.AddAuthentication(TestAuthHandler.SchemeName)
@@ -226,14 +549,107 @@ public sealed class AuthenticatedPlaybackTests : IClassFixture<BunnyMockFactory>
                 o.DefaultChallengeScheme = TestAuthHandler.SchemeName;
                 o.DefaultScheme = TestAuthHandler.SchemeName;
             });
+
+            if (useRecordingWorker)
+            {
+                services.RemoveAll<ISecureMediaWorker>();
+                services.AddSingleton<RecordingSecureMediaWorker>();
+                services.AddSingleton<ISecureMediaWorker>(sp => sp.GetRequiredService<RecordingSecureMediaWorker>());
+            }
         });
     });
+
+    private static async Task<(HttpClient Client, string AntiforgeryToken, PlaybackSessionResponse Session)> CreateSecureWebRtcSessionAsync(
+        WebApplicationFactory<Program> factory)
+    {
+        var videoId = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var storage = scope.ServiceProvider.GetRequiredService<IProtectedMediaStorage>();
+            await using var source = new MemoryStream([1, 2, 3, 4]);
+            var saved = await storage.SaveSourceAsync(videoId, "secure.mp4", "video/mp4", source, default);
+
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Videos.Add(new Video
+            {
+                Id = videoId,
+                Title = "Secure WebRTC",
+                BunnyLibraryId = 0,
+                BunnyVideoId = "local-" + videoId.ToString("N"),
+                PlaybackProvider = PlaybackProvider.SecureWebRtc,
+                ProtectedMediaStatus = ProtectedMediaStatus.SourceUploaded,
+                ProtectedSourcePath = saved.RelativePath,
+                ProtectedSourceOriginalFileName = saved.OriginalFileName,
+                ProtectedSourceContentType = saved.ContentType,
+                ProtectedSourceSizeBytes = saved.SizeBytes,
+                ProtectedSourceUploadedAt = DateTimeOffset.UtcNow,
+                Status = VideoStatus.Ready,
+                CreatedByUserId = TestAuthHandler.UserId
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        client.BaseAddress = new Uri("https://localhost");
+        var html = await client.GetStringAsync($"/player/watch/{videoId}");
+        var token = ExtractAntiforgeryToken(html);
+
+        var sessionReq = new HttpRequestMessage(HttpMethod.Post, $"/api/videos/{videoId}/playback-session");
+        sessionReq.Headers.Add("RequestVerificationToken", token);
+        var sessionResp = await client.SendAsync(sessionReq);
+        sessionResp.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, await sessionResp.Content.ReadAsStringAsync());
+        var session = await sessionResp.Content.ReadFromJsonAsync<PlaybackSessionResponse>();
+        session.Should().NotBeNull();
+        session!.SecurePlayback.Should().NotBeNull();
+
+        return (client, token, session);
+    }
+
+    private static HttpRequestMessage CreateOfferRequest(string endpoint, string antiForgeryToken, string? playbackToken = null)
+    {
+        var offer = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = JsonContent.Create(new { type = "offer", sdp = "v=0\r\n" })
+        };
+        offer.Headers.Add("RequestVerificationToken", antiForgeryToken);
+        if (!string.IsNullOrWhiteSpace(playbackToken))
+            offer.Headers.Add("X-Playback-Session-Token", playbackToken);
+        return offer;
+    }
+
+    private static void AssertNoDownloadableUrls(string body)
+    {
+        body.Should().NotContain(".m3u8");
+        body.Should().NotContain(".mpd");
+        body.Should().NotContain(".ts");
+        body.Should().NotContain(".m4s");
+        body.Should().NotContain(".mp4");
+        body.Should().NotContain("b-cdn", "Bunny CDN hosts must not be exposed in this response");
+    }
 
     private static string ExtractAntiforgeryToken(string html)
     {
         var match = Regex.Match(html, "name=\"__RequestVerificationToken\"[^>]*value=\"(?<token>[^\"]+)\"");
         match.Success.Should().BeTrue("watch page should render an antiforgery token");
         return match.Groups["token"].Value;
+    }
+}
+
+public sealed class RecordingSecureMediaWorker : ISecureMediaWorker
+{
+    public ConcurrentBag<Guid> StartedSessions { get; } = [];
+    public ConcurrentBag<Guid> StoppedSessions { get; } = [];
+
+    public Task StartAsync(PlaybackSession session, Video video, CancellationToken ct)
+    {
+        StartedSessions.Add(session.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(Guid sessionId, CancellationToken ct)
+    {
+        StoppedSessions.Add(sessionId);
+        return Task.CompletedTask;
     }
 }
 

@@ -2,10 +2,25 @@ namespace VideoSecurity.Domain.Dtos;
 
 public sealed record PlaybackSessionResponse(
     Guid SessionId,
-    string EmbedUrl,
+    string? EmbedUrl,
     DateTimeOffset ExpiresAt,
     WatermarkPayload Watermark,
-    string? HeartbeatToken = null);
+    string? HeartbeatToken = null,
+    string PlaybackProvider = "BunnyStream",
+    SecurePlaybackDescriptor? SecurePlayback = null);
+
+public sealed record SecurePlaybackDescriptor(
+    string Mode,
+    string OfferEndpoint,
+    IReadOnlyList<string> IceServers);
+
+public sealed record SecurePlaybackOfferRequest(
+    string Type,
+    string Sdp);
+
+public sealed record SecurePlaybackAnswerResponse(
+    string Type,
+    string Sdp);
 
 public sealed record WatermarkPayload(
     string DisplayText,

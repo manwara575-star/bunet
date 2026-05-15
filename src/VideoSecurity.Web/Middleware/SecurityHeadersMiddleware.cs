@@ -35,7 +35,8 @@ public sealed class SecurityHeadersMiddleware
             ctx.Request.Path.StartsWithSegments("/demo") ||
             ctx.Request.Path.StartsWithSegments("/player/watch") ||
             ctx.Request.Path.StartsWithSegments("/public-playback/bootstrap") ||
-            ctx.Request.Path.StartsWithSegments("/api/videos");
+            ctx.Request.Path.StartsWithSegments("/api/videos") ||
+            ctx.Request.Path.StartsWithSegments("/api/secure-playback");
 
         // CSP: embed paths allow external framing; all others restrict to self.
         var frameAncestors = isEmbedPath ? _embedFrameAncestors : "'self'";
@@ -46,9 +47,9 @@ public sealed class SecurityHeadersMiddleware
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
             "img-src 'self' data: https:; " +
             "font-src 'self' data:; " +
-            "connect-src 'self' https://video.bunnycdn.com; " +
+            "connect-src 'self' https://video.bunnycdn.com stun: turn: turns:; " +
             "frame-src https://iframe.mediadelivery.net; " +
-            "media-src 'none'; " +
+            "media-src 'self' blob:; " +
             "object-src 'none'; " +
             "base-uri 'self'; " +
             "form-action 'self'; " +

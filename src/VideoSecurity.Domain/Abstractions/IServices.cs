@@ -18,6 +18,25 @@ public interface IPlaybackSessionService
     Task<int> RevokeAllForVideoAsync(Guid videoId, string reason, CancellationToken ct);
 }
 
+public sealed record ProtectedMediaSaveResult(
+    string RelativePath,
+    string OriginalFileName,
+    string ContentType,
+    long SizeBytes);
+
+public interface IProtectedMediaStorage
+{
+    Task<ProtectedMediaSaveResult> SaveSourceAsync(Guid videoId, string originalFileName, string contentType, Stream source, CancellationToken ct);
+    Task<bool> ExistsAsync(string relativePath, CancellationToken ct);
+    string GetFullPath(string relativePath);
+}
+
+public interface ISecureMediaWorker
+{
+    Task StartAsync(PlaybackSession session, Video video, CancellationToken ct);
+    Task StopAsync(Guid sessionId, CancellationToken ct);
+}
+
 public interface IAuditLogService
 {
     Task WriteAsync(string actorUserId, AuditAction action, string? entityType, string? entityId, object? metadata, string ipHash, string userAgentHash, CancellationToken ct);

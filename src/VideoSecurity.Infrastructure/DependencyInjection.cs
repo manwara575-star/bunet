@@ -18,6 +18,10 @@ public static class DependencyInjection
     {
         services.AddOptions<BunnyOptions>()
             .Bind(config.GetSection(BunnyOptions.SectionName));
+        services.AddOptions<ProtectedMediaOptions>()
+            .Bind(config.GetSection(ProtectedMediaOptions.SectionName));
+        services.AddOptions<SecurePlaybackOptions>()
+            .Bind(config.GetSection(SecurePlaybackOptions.SectionName));
 
         services.AddSingleton<IBunnyOptionsProvider, BunnyOptionsProvider>();
 
@@ -42,6 +46,8 @@ public static class DependencyInjection
             sp.GetRequiredService<IBunnyOptionsProvider>()));
 
         services.AddScoped<IVideoEntitlementService, VideoEntitlementService>();
+        services.AddSingleton<IProtectedMediaStorage, FileSystemProtectedMediaStorage>();
+        services.AddSingleton<ISecureMediaWorker, FfmpegSecureMediaWorker>();
         services.AddScoped<IVideoSecurityPolicyService, VideoSecurityPolicyService>();
         services.AddScoped<IPlaybackSessionService>(sp => new PlaybackSessionService(
             sp.GetRequiredService<AppDbContext>(),
@@ -50,7 +56,10 @@ public static class DependencyInjection
             sp.GetRequiredService<IBunnyOptionsProvider>(),
             sp.GetRequiredService<ISystemClock>(),
             sp.GetRequiredService<IVideoSecurityPolicyService>(),
-            sp.GetRequiredService<SecurityMetrics>()));
+            sp.GetRequiredService<SecurityMetrics>(),
+            sp.GetRequiredService<IOptions<SecurePlaybackOptions>>(),
+            sp.GetRequiredService<ISecureMediaWorker>(),
+            sp.GetRequiredService<IProtectedMediaStorage>()));
         services.AddScoped<ISecurityEventService>(sp => new SecurityEventService(
             sp.GetRequiredService<AppDbContext>(),
             sp.GetRequiredService<ISystemClock>(),

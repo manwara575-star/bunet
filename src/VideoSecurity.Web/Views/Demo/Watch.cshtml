@@ -108,6 +108,13 @@
                             referrerpolicy="strict-origin-when-cross-origin"
                             allow="encrypted-media; autoplay"
                             sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>
+                    <video id="player-video"
+                           class="player-video"
+                           hidden
+                           playsinline
+                           controls
+                           controlsList="nodownload noremoteplayback"
+                           disablePictureInPicture></video>
                     <div id="player-status" class="player-status" role="status"></div>
                     <button type="button" id="btn-fullscreen" class="player-fs-btn" aria-label="Fullscreen">⛶</button>
                 </div>

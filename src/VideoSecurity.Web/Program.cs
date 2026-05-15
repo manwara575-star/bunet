@@ -58,6 +58,12 @@ builder.Services.AddAntiforgery(o =>
     o.Cookie.SecurePolicy = cookieSecurePolicy;
 });
 builder.Services.AddProblemDetails();
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
+{
+    o.MultipartBodyLengthLimit = builder.Configuration.GetValue<long>(
+        "ProtectedMedia:MaxSourceBytes",
+        10L * 1024 * 1024 * 1024);
+});
 
 // Health checks: liveness (no deps) + readiness (db).
 var connStr = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=videosecurity.db";
@@ -97,6 +103,17 @@ builder.Services.AddRateLimiter(o =>
             {
                 PermitLimit = 20,
                 Window = TimeSpan.FromMinutes(5),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    o.AddPolicy("secure-playback", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ctx.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));

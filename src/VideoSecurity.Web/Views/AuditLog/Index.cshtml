@@ -1,4 +1,5 @@
 @model VideoSecurity.Web.Controllers.Admin.AuditLogController.IndexViewModel
+@using System.Text.RegularExpressions
 @using VideoSecurity.Domain.Entities
 @{ ViewData["Title"] = "Audit log"; }
 
@@ -44,7 +45,7 @@
             <td><code>@a.ActorUserId</code></td>
             <td>@a.Action</td>
             <td>@a.EntityType / <code>@a.EntityId</code></td>
-            <td><pre class="m-0 small" style="white-space:pre-wrap">@a.MetadataJson</pre></td>
+            <td><pre class="m-0 small" style="white-space:pre-wrap">@RedactPlaybackInfrastructure(a.MetadataJson)</pre></td>
         </tr>
     }
     </tbody>
@@ -65,3 +66,14 @@
         }
     </ul>
 </nav>
+
+@functions {
+    private static string? RedactPlaybackInfrastructure(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        value = Regex.Replace(value, @"https?://iframe\.mediadelivery\.net[^\s""'<>\\]*", "[redacted-bunny-iframe]", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"iframe\.mediadelivery\.net", "[redacted-bunny-iframe]", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\b[a-z0-9-]+\.b-cdn\.net\b", "[redacted-bunny-cdn]", RegexOptions.IgnoreCase);
+        return value;
+    }
+}

@@ -20,6 +20,29 @@
         const file = document.getElementById('file').files[0];
         if (!file) return alert('Pick a file first.');
 
+        const mode = document.getElementById('uploadMode').value;
+        const af = document.querySelector('input[name="__RequestVerificationToken"]').value;
+
+        if (mode === 'secure-webrtc') {
+            const form = new FormData();
+            form.append('title', document.getElementById('title').value.trim());
+            form.append('description', document.getElementById('description').value.trim());
+            form.append('courseId', document.getElementById('courseId').value.trim());
+            form.append('file', file);
+
+            log('Uploading protected source to server storage...');
+            const resp = await fetch('/api/admin/videos/secure', {
+                method: 'POST',
+                headers: { 'RequestVerificationToken': af },
+                body: form
+            });
+            const text = await resp.text();
+            if (!resp.ok) { log('Secure upload failed: ' + resp.status + ' ' + text); return; }
+            const created = JSON.parse(text);
+            log('Secure WebRTC source ready for video ' + created.videoId + '. Configure the WHEP worker before playback.');
+            return;
+        }
+
         const body = {
             title: document.getElementById('title').value.trim(),
             description: document.getElementById('description').value.trim() || null,
@@ -27,7 +50,6 @@
             collectionId: document.getElementById('collectionId').value.trim() || null,
             fileName: file.name
         };
-        const af = document.querySelector('input[name="__RequestVerificationToken"]').value;
 
         log('Creating Bunny video object...');
         const resp = await fetch('/api/admin/videos', {

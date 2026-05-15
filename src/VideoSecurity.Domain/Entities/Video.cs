@@ -19,6 +19,20 @@ public class Video
 
     public VideoStatus Status { get; set; } = VideoStatus.Created;
 
+    public PlaybackProvider PlaybackProvider { get; set; } = PlaybackProvider.BunnyStream;
+
+    public ProtectedMediaStatus ProtectedMediaStatus { get; set; } = ProtectedMediaStatus.None;
+
+    public string? ProtectedSourcePath { get; set; }
+
+    public string? ProtectedSourceOriginalFileName { get; set; }
+
+    public string? ProtectedSourceContentType { get; set; }
+
+    public long? ProtectedSourceSizeBytes { get; set; }
+
+    public DateTimeOffset? ProtectedSourceUploadedAt { get; set; }
+
     /// <summary>Always true in v1 — every video is DRM-protected.</summary>
     public bool IsProtected { get; set; } = true;
 

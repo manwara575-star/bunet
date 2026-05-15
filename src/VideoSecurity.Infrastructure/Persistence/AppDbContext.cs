@@ -39,11 +39,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         b.Entity<Video>(e =>
         {
             e.HasIndex(x => x.BunnyVideoId).IsUnique();
+            e.HasIndex(x => x.PlaybackProvider);
+            e.HasIndex(x => x.ProtectedMediaStatus);
             e.Property(x => x.Title).HasMaxLength(512).IsRequired();
             e.Property(x => x.BunnyVideoId).HasMaxLength(64).IsRequired();
             e.Property(x => x.CourseId).HasMaxLength(64);
             e.Property(x => x.BunnyCollectionId).HasMaxLength(64);
             e.Property(x => x.CreatedByUserId).HasMaxLength(450).IsRequired();
+            e.Property(x => x.ProtectedSourcePath).HasMaxLength(1024);
+            e.Property(x => x.ProtectedSourceOriginalFileName).HasMaxLength(512);
+            e.Property(x => x.ProtectedSourceContentType).HasMaxLength(128);
         });
 
         b.Entity<VideoAccessGrant>(e =>

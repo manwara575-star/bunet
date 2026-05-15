@@ -1,7 +1,25 @@
 services:
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: videosecurity-mediamtx
+    environment:
+      # Browser WebRTC ICE candidates need a host/IP reachable by the browser.
+      # Use "localhost" for local Docker Compose; set to your public hostname/IP behind a proxy.
+      MTX_WEBRTCADDITIONALHOSTS: "${MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS:-localhost}"
+    expose:
+      - "8554" # RTSP ingest from the ASP.NET/FFmpeg container only
+      - "8889" # internal WHEP endpoint proxied by ASP.NET
+    ports:
+      - "${MEDIAMTX_WEBRTC_UDP_PORT:-8189}:8189/udp"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    restart: unless-stopped
+
   web:
     build: .
     container_name: videosecurity-web
+    depends_on:
+      - mediamtx
     ports:
       - "${HOST_PORT:-5102}:8080"
     environment:
@@ -21,6 +39,16 @@ services:
       Seed__AdminPassword: "${SEED_ADMIN_PASSWORD:-}"
       Embed__AllowedDomains: "${EMBED_ALLOWED_DOMAINS:-cifm.polytronx.com}"
       Embed__PublicBaseUrl: "${EMBED_PUBLIC_BASE_URL:-https://cifm.polytronx.com}"
+      ProtectedMedia__RootPath: "/data/protected-media"
+      ProtectedMedia__MaxSourceBytes: "${PROTECTED_MEDIA_MAX_SOURCE_BYTES:-10737418240}"
+      SecurePlayback__Enabled: "${SECURE_PLAYBACK_ENABLED:-true}"
+      SecurePlayback__WhepEndpointTemplate: "${SECURE_PLAYBACK_WHEP_ENDPOINT_BASE:-http://mediamtx:8889}/{sessionId}/whep"
+      SecurePlayback__WhepBearerToken: "${SECURE_PLAYBACK_WHEP_BEARER_TOKEN:-}"
+      SecurePlayback__StartFfmpegOnSessionCreate: "${SECURE_PLAYBACK_START_FFMPEG:-true}"
+      SecurePlayback__FfmpegPath: "${SECURE_PLAYBACK_FFMPEG_PATH:-ffmpeg}"
+      SecurePlayback__RtspPublishUrlTemplate: "${SECURE_PLAYBACK_RTSP_PUBLISH_BASE:-rtsp://mediamtx:8554}/{sessionId}"
+      SecurePlayback__BurnWatermark: "${SECURE_PLAYBACK_BURN_WATERMARK:-true}"
+      SecurePlayback__WatermarkFontSize: "${SECURE_PLAYBACK_WATERMARK_FONT_SIZE:-28}"
     volumes:
       - videosec-data:/data
     restart: unless-stopped

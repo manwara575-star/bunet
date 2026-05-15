@@ -1,17 +1,17 @@
 /* Protected video player wrapper.
  *
  * Responsibilities:
- *  - Fetch a signed Bunny embed URL from the backend (never rendered server-side).
- *  - Set the iframe src dynamically (URL never appears in initial HTML or logs).
+     *  - Fetch a signed Bunny embed URL or Secure WebRTC descriptor from the backend.
+     *  - Set runtime playback dynamically (URLs never appear in initial HTML or logs).
  *  - Render a moving translucent watermark on top of the iframe.
  *  - Send heartbeats with visibility/focus state.
  *  - Emit best-effort security events.
  *  - Provide app-level fullscreen so the watermark stays on top.
  *
- * Free-tier limits we intentionally accept:
- *  - We CANNOT fully block screen recording from a browser tab.
- *  - We CANNOT prevent a determined user from inspecting the iframe's src in DevTools.
- *  - Our defenses are: short-lived signed URLs, DRM at Bunny, and visible forensic watermarking.
+     * Free-tier limits we intentionally accept:
+     *  - We CANNOT fully block screen recording from a browser tab.
+     *  - We CANNOT prevent a determined user from inspecting the iframe's src in DevTools.
+     *  - Secure WebRTC mode removes HLS/DASH/MP4 URLs from the browser to defeat downloader-mode tools.
  */
 window.VideoSecurity = window.VideoSecurity || {};
 
@@ -64,6 +64,94 @@ window.VideoSecurity = window.VideoSecurity || {};
             last.set(type, now);
             return true;
         };
+    }
+
+    function waitForIceGatheringComplete(peer) {
+        if (peer.iceGatheringState === 'complete') return Promise.resolve();
+        return new Promise(resolve => {
+            const timeout = setTimeout(resolve, 3000);
+            peer.addEventListener('icegatheringstatechange', () => {
+                if (peer.iceGatheringState === 'complete') {
+                    clearTimeout(timeout);
+                    resolve();
+                }
+            });
+        });
+    }
+
+    async function startSecureWebRtc(session, opts, log) {
+        const video = document.getElementById('player-video');
+        const frame = document.getElementById('player-frame');
+        if (!session.securePlayback || !session.securePlayback.offerEndpoint) {
+            log('Secure playback is not configured.', 'error');
+            return null;
+        }
+        if (!window.RTCPeerConnection || !window.MediaStream) {
+            log('Secure playback is not supported in this browser.', 'error');
+            return null;
+        }
+
+        frame.hidden = true;
+        frame.src = 'about:blank';
+        video.hidden = false;
+
+        const iceServers = (session.securePlayback.iceServers || []).map(url => ({ urls: url }));
+        const peer = new RTCPeerConnection({ iceServers });
+        const remote = new MediaStream();
+        video.srcObject = remote;
+
+        peer.addTransceiver('video', { direction: 'recvonly' });
+        peer.addTransceiver('audio', { direction: 'recvonly' });
+        peer.addEventListener('track', event => {
+            for (const track of event.streams[0]?.getTracks() || [event.track]) {
+                remote.addTrack(track);
+            }
+        });
+        peer.addEventListener('connectionstatechange', () => {
+            if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
+                log('Secure stream disconnected. Try refreshing the page.', 'error');
+            }
+        });
+
+        try {
+            const offer = await peer.createOffer();
+            await peer.setLocalDescription(offer);
+            await waitForIceGatheringComplete(peer);
+
+            const headers = {
+                'Content-Type': 'application/json',
+                'X-Playback-Session-Token': session.heartbeatToken || ''
+            };
+            if (opts.antiForgery) headers['RequestVerificationToken'] = opts.antiForgery;
+
+            const resp = await fetch(session.securePlayback.offerEndpoint, {
+                method: 'POST',
+                headers,
+                credentials: 'same-origin',
+                body: JSON.stringify({ type: 'offer', sdp: peer.localDescription.sdp })
+            });
+            if (!resp.ok) {
+                log(resp.status === 503 ? 'Secure stream worker is not configured.' : 'Secure stream failed to start.', 'error');
+                peer.close();
+                video.srcObject = null;
+                return null;
+            }
+
+            const answer = await resp.json();
+            await peer.setRemoteDescription({ type: answer.type || 'answer', sdp: answer.sdp });
+            try {
+                await video.play();
+                log('Secure WebRTC playback active.');
+            } catch {
+                log('Secure WebRTC ready. Press play to start playback.');
+            }
+            return peer;
+        } catch {
+            peer.close();
+            video.srcObject = null;
+            log('Secure playback failed. Try refreshing the page.', 'error');
+            return null;
+        }
     }
 
     // --- Tiled diagonal watermark grid layer (CSS class + SVG data URL background). ---
@@ -277,10 +365,14 @@ window.VideoSecurity = window.VideoSecurity || {};
         const shell = document.getElementById('player-shell');
         const wm = document.getElementById('player-watermark');
         const frame = document.getElementById('player-frame');
+        const video = document.getElementById('player-video');
         const status = document.getElementById('player-status');
         const fsBtn = document.getElementById('btn-fullscreen');
 
-        function log(msg) { status.textContent = msg; }
+        function log(msg, kind) {
+            status.textContent = msg;
+            status.classList.toggle('is-error', kind === 'error');
+        }
 
         // Support pre-populated session (embed mode) or fetch from API (normal mode).
         let session = opts.session || null;
@@ -312,8 +404,21 @@ window.VideoSecurity = window.VideoSecurity || {};
         // Install the tamper guard (MutationObserver + sweep + self-healing).
         const guard = installTamperGuard(shell, safeDisplay, gridText, opts, session.sessionId);
 
-        // NEVER set iframe src in attributes that get logged. Use direct property assignment.
-        frame.src = session.embedUrl;
+        let securePeer = null;
+        const provider = session.playbackProvider || (session.embedUrl ? 'BunnyStream' : '');
+        if (provider === 'SecureWebRtc') {
+            try {
+                securePeer = await startSecureWebRtc(session, opts, log);
+                if (!securePeer) return;
+            } catch {
+                log('Secure playback failed. Try refreshing the page.', 'error');
+                return;
+            }
+        } else {
+            video.hidden = true;
+            // NEVER set iframe src in attributes that get logged. Use direct property assignment.
+            frame.src = session.embedUrl;
+        }
 
         // Heartbeats every 15s with visibility/focus/watermark/fullscreen state.
         const HB_MS = 15000;
@@ -376,6 +481,7 @@ window.VideoSecurity = window.VideoSecurity || {};
         window.addEventListener('beforeunload', () => {
             clearInterval(hbTimer);
             guard.stop();
+            if (securePeer) securePeer.close();
             postEvent(opts.eventsEndpoint, { sessionId: session.sessionId, videoId: opts.videoId, type: 'Other', metadata: 'unload' });
         });
     };

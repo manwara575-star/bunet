@@ -9,13 +9,19 @@
     isolation: isolate;
 }
 
-.player-shell iframe {
+.player-shell iframe,
+.player-shell .player-video {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     border: 0;
     z-index: 1;
+}
+
+.player-shell .player-video {
+    background: #000;
+    object-fit: contain;
 }
 
 /* Tiled diagonal watermark layer — defense-in-depth against single-span removal.
@@ -67,6 +73,17 @@
     font: 500 11px system-ui, sans-serif;
     color: rgba(255, 255, 255, 0.6);
     pointer-events: none;
+}
+
+.player-status.is-error {
+    max-width: min(520px, calc(100% - 16px));
+    padding: 8px 10px;
+    border: 1px solid rgba(248, 113, 113, 0.5);
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.86);
+    color: #fecaca;
+    font-size: 13px;
+    line-height: 1.35;
 }
 
 .player-fs-btn {

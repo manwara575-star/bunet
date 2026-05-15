@@ -22,6 +22,9 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
     private readonly ISystemClock _clock;
     private readonly IVideoSecurityPolicyService _policies;
     private readonly SecurityMetrics _metrics;
+    private readonly SecurePlaybackOptions _securePlayback;
+    private readonly ISecureMediaWorker? _secureMediaWorker;
+    private readonly IProtectedMediaStorage? _protectedMediaStorage;
 
     [ActivatorUtilitiesConstructor]
     public PlaybackSessionService(
@@ -31,7 +34,10 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
         IBunnyOptionsProvider options,
         ISystemClock clock,
         IVideoSecurityPolicyService policies,
-        SecurityMetrics metrics)
+        SecurityMetrics metrics,
+        IOptions<SecurePlaybackOptions>? securePlaybackOptions = null,
+        ISecureMediaWorker? secureMediaWorker = null,
+        IProtectedMediaStorage? protectedMediaStorage = null)
     {
         _db = db;
         _entitlement = entitlement;
@@ -40,6 +46,9 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
         _clock = clock;
         _policies = policies;
         _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
+        _securePlayback = securePlaybackOptions?.Value ?? new SecurePlaybackOptions();
+        _secureMediaWorker = secureMediaWorker;
+        _protectedMediaStorage = protectedMediaStorage;
     }
 
     public PlaybackSessionService(
@@ -49,8 +58,11 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
         IOptions<BunnyOptions> opts,
         ISystemClock clock,
         IVideoSecurityPolicyService policies,
-        SecurityMetrics metrics)
-        : this(db, entitlement, embedSigner, new StaticBunnyOptionsProvider(opts.Value), clock, policies, metrics) { }
+        SecurityMetrics metrics,
+        IOptions<SecurePlaybackOptions>? securePlaybackOptions = null,
+        ISecureMediaWorker? secureMediaWorker = null,
+        IProtectedMediaStorage? protectedMediaStorage = null)
+        : this(db, entitlement, embedSigner, new StaticBunnyOptionsProvider(opts.Value), clock, policies, metrics, securePlaybackOptions, secureMediaWorker, protectedMediaStorage) { }
 
     public Task<PlaybackSessionResponse> CreateAsync(string userId, Guid videoId, string ipAddress, string userAgent, CancellationToken ct) =>
         CreateAsync(userId, videoId, ipAddress, userAgent, maxSessionTtl: null, ct);
@@ -81,6 +93,9 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
         var video = await _db.Videos.AsNoTracking().FirstAsync(v => v.Id == videoId, ct);
         if (video.Status != VideoStatus.Ready)
             throw new InvalidOperationException($"Video is not ready (status={video.Status}).");
+
+        if (video.PlaybackProvider == PlaybackProvider.SecureWebRtc)
+            await ValidateSecureWebRtcReadinessAsync(video, ct);
 
         var policy = await _policies.GetForVideoAsync(videoId, ct);
 
@@ -146,13 +161,57 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
         session.WatermarkPayload = watermark.DisplayText;
         session.WatermarkPayloadHash = HashUtil.Sha256(watermark.Token);
 
+        string? heartbeatToken = null;
+        if (video.PlaybackProvider == PlaybackProvider.SecureWebRtc)
+        {
+            if (string.IsNullOrWhiteSpace(video.ProtectedSourcePath))
+                throw new InvalidOperationException("Secure WebRTC source is not configured for this video.");
+
+            heartbeatToken = GenerateSecret();
+            session.HeartbeatTokenHash = HashUtil.Sha256(heartbeatToken);
+        }
+
         _db.PlaybackSessions.Add(session);
         await _db.SaveChangesAsync(ct);
         _metrics.RecordSessionCreated();
 
+        if (video.PlaybackProvider == PlaybackProvider.SecureWebRtc)
+        {
+            try
+            {
+                if (_secureMediaWorker is not null)
+                    await _secureMediaWorker.StartAsync(session, video, ct);
+            }
+            catch
+            {
+                session.Revoked = true;
+                session.RevokedAt = _clock.UtcNow;
+                session.RevocationReason = "SecureMediaWorkerStartFailed";
+                await _db.SaveChangesAsync(ct);
+                throw;
+            }
+
+            var secure = new SecurePlaybackDescriptor(
+                "webrtc",
+                $"/api/secure-playback/{session.Id}/offer",
+                _securePlayback.IceServers);
+
+            return new PlaybackSessionResponse(
+                session.Id,
+                null,
+                expires,
+                watermark,
+                heartbeatToken,
+                nameof(PlaybackProvider.SecureWebRtc),
+                secure);
+        }
+
+        if (video.PlaybackProvider != PlaybackProvider.BunnyStream)
+            throw new InvalidOperationException($"Playback provider {video.PlaybackProvider} is not available yet.");
+
         var embedUrl = _embedSigner.BuildSignedEmbedUrl(video.BunnyVideoId, expires, userId, session.Id.ToString("N"));
 
-        return new PlaybackSessionResponse(session.Id, embedUrl, expires, watermark);
+        return new PlaybackSessionResponse(session.Id, embedUrl, expires, watermark, PlaybackProvider: nameof(PlaybackProvider.BunnyStream));
     }
 
     public Task<PlaybackSession?> GetAsync(Guid sessionId, CancellationToken ct) =>
@@ -167,6 +226,17 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
 
         var now = _clock.UtcNow;
         if (now > session.ExpiresAt) throw new InvalidOperationException("Session expired.");
+
+        if (!string.IsNullOrWhiteSpace(session.HeartbeatTokenHash))
+        {
+            if (string.IsNullOrWhiteSpace(request.HeartbeatToken) ||
+                !CryptographicOperations.FixedTimeEquals(
+                    Encoding.UTF8.GetBytes(HashUtil.Sha256(request.HeartbeatToken)),
+                    Encoding.UTF8.GetBytes(session.HeartbeatTokenHash)))
+            {
+                throw new UnauthorizedAccessException("Invalid playback heartbeat token.");
+            }
+        }
 
         var policy = await _policies.GetForVideoAsync(session.VideoId, ct);
 
@@ -229,6 +299,8 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
             session.Revoked = true;
             session.RevokedAt = now;
             session.RevocationReason = "RiskAutoRevoke";
+            if (_secureMediaWorker is not null)
+                await _secureMediaWorker.StopAsync(session.Id, ct);
             _metrics.RecordAutoRevoke("Heartbeat");
             _metrics.RecordSessionRevoked("RiskAutoRevoke");
             _db.VideoSecurityEvents.Add(new VideoSecurityEvent
@@ -255,6 +327,8 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
         session.Revoked = true;
         session.RevokedAt = _clock.UtcNow;
         session.RevocationReason = reason;
+        if (_secureMediaWorker is not null)
+            await _secureMediaWorker.StopAsync(session.Id, ct);
         await _db.SaveChangesAsync(ct);
         _metrics.RecordSessionRevoked(reason);
     }
@@ -272,6 +346,8 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
             s.Revoked = true;
             s.RevokedAt = now;
             s.RevocationReason = reason;
+            if (_secureMediaWorker is not null)
+                await _secureMediaWorker.StopAsync(s.Id, ct);
         }
         if (active.Count > 0)
         {
@@ -301,6 +377,49 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
     }
 
     private static string Truncate(string s, int len) => s.Length <= len ? s : s[..len];
+
+    private async Task ValidateSecureWebRtcReadinessAsync(Video video, CancellationToken ct)
+    {
+        if (!_securePlayback.Enabled || string.IsNullOrWhiteSpace(_securePlayback.WhepEndpointTemplate))
+            throw new InvalidOperationException("Secure WebRTC playback is not configured.");
+
+        if (!_securePlayback.BurnWatermark)
+            throw new InvalidOperationException("Secure WebRTC playback requires burned forensic watermarking.");
+
+        if (_securePlayback.StartFfmpegOnSessionCreate)
+        {
+            if (_secureMediaWorker is null)
+                throw new InvalidOperationException("Secure WebRTC media worker is not configured.");
+
+            if (string.IsNullOrWhiteSpace(_securePlayback.RtspPublishUrlTemplate))
+                throw new InvalidOperationException("Secure WebRTC RTSP publish URL is not configured.");
+        }
+
+        if (string.IsNullOrWhiteSpace(video.ProtectedSourcePath))
+            throw new InvalidOperationException("Secure WebRTC source is not configured for this video.");
+
+        if (_protectedMediaStorage is null)
+            return;
+
+        bool exists;
+        try
+        {
+            exists = await _protectedMediaStorage.ExistsAsync(video.ProtectedSourcePath, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new InvalidOperationException("Secure WebRTC source path is invalid.", ex);
+        }
+
+        if (!exists)
+            throw new InvalidOperationException("Secure WebRTC source media is not available.");
+    }
+
+    private static string GenerateSecret()
+    {
+        var secret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        return secret.TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
 }
 
 internal static class HashUtil

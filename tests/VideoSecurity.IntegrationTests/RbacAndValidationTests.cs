@@ -142,6 +142,56 @@ public sealed class RbacAndValidationTests : IClassFixture<BunnyMockFactory>
         }
     }
 
+    [Fact]
+    public async Task AdminCreateSecure_UploadsProtectedSource_AndCreatesSecureWebRtcVideo()
+    {
+        await using var factory = AdminFactory();
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        client.BaseAddress = new Uri("https://localhost");
+        var token = await GetAntiforgeryTokenAsync(client);
+        var title = "secure-source-" + Guid.NewGuid().ToString("N");
+
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent(title), "title");
+        content.Add(new StreamContent(new MemoryStream([1, 2, 3, 4])), "file", "secure.mp4");
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/admin/videos/secure") { Content = content };
+        req.Headers.Add("RequestVerificationToken", token);
+
+        var resp = await client.SendAsync(req);
+        var body = await resp.Content.ReadAsStringAsync();
+        resp.StatusCode.Should().Be(HttpStatusCode.OK, body);
+        body.Should().Contain("SecureWebRtc");
+        body.Should().Contain("SourceUploaded");
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var video = await db.Videos.SingleAsync(v => v.Title == title);
+        video.PlaybackProvider.Should().Be(PlaybackProvider.SecureWebRtc);
+        video.ProtectedMediaStatus.Should().Be(ProtectedMediaStatus.SourceUploaded);
+        video.ProtectedSourcePath.Should().NotBeNullOrWhiteSpace();
+        video.Status.Should().Be(VideoStatus.Ready);
+    }
+
+    [Fact]
+    public async Task AdminCreateSecure_RejectsDisallowedProtectedSourceExtension()
+    {
+        await using var factory = AdminFactory();
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        client.BaseAddress = new Uri("https://localhost");
+        var token = await GetAntiforgeryTokenAsync(client);
+
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent("bad-secure-source"), "title");
+        content.Add(new StreamContent(new MemoryStream([1, 2, 3, 4])), "file", "not-a-video.exe");
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/admin/videos/secure") { Content = content };
+        req.Headers.Add("RequestVerificationToken", token);
+
+        var resp = await client.SendAsync(req);
+        var body = await resp.Content.ReadAsStringAsync();
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        body.Should().Contain("not allowed");
+    }
+
     // ----- Metrics auth tests -----
 
     [Fact]

@@ -4,6 +4,14 @@
 
 <form id="meta-form" class="mb-3">
     @Html.AntiForgeryToken()
+    <div class="mb-2">
+        <label class="form-label">Playback mode</label>
+        <select id="uploadMode" class="form-select">
+            <option value="bunny" selected>Bunny Stream secure embed</option>
+            <option value="secure-webrtc">Secure WebRTC protected source</option>
+        </select>
+        <div class="form-text">Secure WebRTC stores the original file privately on this server and never exposes HLS/MP4 URLs to the browser.</div>
+    </div>
     <div class="mb-2"><label class="form-label">Title</label><input id="title" class="form-control" required /></div>
     <div class="mb-2"><label class="form-label">Description</label><textarea id="description" class="form-control"></textarea></div>
     <div class="mb-2"><label class="form-label">Course Id (optional)</label><input id="courseId" class="form-control" /></div>

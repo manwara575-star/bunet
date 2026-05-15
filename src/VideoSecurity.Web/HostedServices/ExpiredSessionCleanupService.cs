@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using VideoSecurity.Domain.Abstractions;
 using VideoSecurity.Infrastructure.Persistence;
 
 namespace VideoSecurity.Web.HostedServices;
@@ -50,6 +51,7 @@ public sealed class ExpiredSessionCleanupService : BackgroundService
     {
         await using var scope = _sp.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var secureWorker = scope.ServiceProvider.GetService<ISecureMediaWorker>();
         var now = DateTimeOffset.UtcNow;
 
         // Revoke expired but not-yet-revoked sessions (bounded batch).
@@ -62,6 +64,8 @@ public sealed class ExpiredSessionCleanupService : BackgroundService
         {
             s.Revoked = true;
             s.RevocationReason = "expired";
+            if (secureWorker is not null)
+                await secureWorker.StopAsync(s.Id, stoppingToken);
         }
 
         // Prune ancient telemetry.
