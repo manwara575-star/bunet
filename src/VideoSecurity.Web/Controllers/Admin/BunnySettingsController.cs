@@ -76,6 +76,33 @@ public sealed class BunnySettingsController : Controller
         var ourToken = ComputeToken(ourKey, testVideoId, testExpires);
         var bunnyToken = bunnyKeyStr.Length > 0 ? ComputeToken(bunnyKeyStr, testVideoId, testExpires) : "(no bunny key)";
 
+        // Also dump all property names from the API response for debugging
+        var allProps = new Dictionary<string, string>();
+        if (resp.IsSuccessStatusCode)
+        {
+            var doc2 = JsonDocument.Parse(body);
+            foreach (var prop in doc2.RootElement.EnumerateObject())
+            {
+                var val = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.String => prop.Value.GetString() ?? "",
+                    JsonValueKind.True => "true",
+                    JsonValueKind.False => "false",
+                    JsonValueKind.Number => prop.Value.ToString(),
+                    JsonValueKind.Array => $"[{prop.Value.GetArrayLength()} items]",
+                    _ => prop.Value.ToString()
+                };
+                // Mask anything that looks like a key/secret
+                if (prop.Name.Contains("Key", StringComparison.OrdinalIgnoreCase) ||
+                    prop.Name.Contains("Secret", StringComparison.OrdinalIgnoreCase) ||
+                    prop.Name.Contains("Password", StringComparison.OrdinalIgnoreCase))
+                {
+                    val = val.Length > 8 ? val[..4] + "..." + val[^4..] : val.Length > 0 ? "(has value)" : "(empty)";
+                }
+                allProps[prop.Name] = val;
+            }
+        }
+
         return Ok(new
         {
             bunnyApiStatus = (int)resp.StatusCode,
@@ -90,7 +117,8 @@ public sealed class BunnySettingsController : Controller
             blockDirectAccess,
             testOurToken = ourToken,
             testBunnyToken = bunnyToken,
-            testUrl = $"https://iframe.mediadelivery.net/embed/{opts.LibraryId}/{testVideoId}?token={bunnyToken}&expires={testExpires}"
+            testUrl = $"https://iframe.mediadelivery.net/embed/{opts.LibraryId}/{testVideoId}?token={bunnyToken}&expires={testExpires}",
+            bunnyApiProperties = allProps
         });
     }
 
