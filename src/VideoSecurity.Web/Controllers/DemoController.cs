@@ -37,6 +37,35 @@ public sealed class DemoController : Controller
     }
 
     /// <summary>
+    /// GET /demo/diag — temporary diagnostic to check token key configuration.
+    /// Returns only masked key info, never the actual secret.
+    /// </summary>
+    [HttpGet("/demo/diag")]
+    public async Task<IActionResult> Diag(CancellationToken ct)
+    {
+        var opts = await _bunnyOptions.GetAsync(ct);
+        var keyLen = opts.EmbedTokenKey?.Length ?? 0;
+        var keyPreview = keyLen >= 4 ? opts.EmbedTokenKey![..4] + "..." + opts.EmbedTokenKey![^4..] : "(empty)";
+
+        // Compute a test token so we can compare with Bunny's expected format
+        var testVideoId = "cca7fb9c-5c83-4c7a-9874-a4af28691c26";
+        var testExpires = 1778830223L;
+        var raw = opts.EmbedTokenKey + testVideoId + testExpires.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var token = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
+
+        return Ok(new
+        {
+            libraryId = opts.LibraryId,
+            embedTokenKeyLength = keyLen,
+            embedTokenKeyPreview = keyPreview,
+            testToken = token,
+            testUrl = $"https://iframe.mediadelivery.net/embed/{opts.LibraryId}/{testVideoId}?token={token}&expires={testExpires}",
+            note = "If the token doesn't match Bunny's expectation, the EmbedTokenKey in admin settings doesn't match Bunny dashboard > Stream > Library > Security > Token Authentication Key"
+        });
+    }
+
+    /// <summary>
     /// GET /demo/{videoId} — public page with embedded video player, no auth required.
     /// </summary>
     [HttpGet("/demo/{videoId:guid}")]
