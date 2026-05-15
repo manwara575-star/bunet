@@ -145,7 +145,7 @@ window.VideoSecurity = window.VideoSecurity || {};
             await peer.setRemoteDescription({ type: answer.type || 'answer', sdp: answer.sdp });
             try {
                 await video.play();
-                log('Secure WebRTC playback active.');
+                log('Secure Demo');
             } catch {
                 log('Secure Demo Ready');
             }
