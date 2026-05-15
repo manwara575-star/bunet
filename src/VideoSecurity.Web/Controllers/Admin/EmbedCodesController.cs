@@ -75,6 +75,6 @@ public sealed class EmbedCodesController : Controller
 
     private static string BuildIframeHtml(string url) =>
         $"<iframe src=\"{url}\" width=\"1280\" height=\"720\" frameborder=\"0\" " +
-        "allow=\"encrypted-media; autoplay\" referrerpolicy=\"no-referrer\" " +
+        "allow=\"encrypted-media; autoplay\" referrerpolicy=\"strict-origin-when-cross-origin\" " +
         "style=\"max-width:100%; aspect-ratio:16/9;\"></iframe>";
 }
