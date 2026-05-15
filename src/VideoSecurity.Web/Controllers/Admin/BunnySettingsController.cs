@@ -1,5 +1,9 @@
 using System.ComponentModel.DataAnnotations;
+using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,12 +21,83 @@ public sealed class BunnySettingsController : Controller
     private readonly IBunnyOptionsProvider _options;
     private readonly AppDbContext _db;
     private readonly IAuditLogService _audit;
+    private readonly IHttpClientFactory _httpFactory;
 
-    public BunnySettingsController(IBunnyOptionsProvider options, AppDbContext db, IAuditLogService audit)
+    public BunnySettingsController(IBunnyOptionsProvider options, AppDbContext db, IAuditLogService audit, IHttpClientFactory httpFactory)
     {
         _options = options;
         _db = db;
         _audit = audit;
+        _httpFactory = httpFactory;
+    }
+
+    /// <summary>
+    /// Temporary diagnostic: compares our stored embed token key with Bunny API's key.
+    /// </summary>
+    [HttpGet("/admin/bunny/diag")]
+    public async Task<IActionResult> Diag(CancellationToken ct)
+    {
+        var opts = await _options.GetAsync(ct);
+        var http = _httpFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"https://video.bunnycdn.com/library/{opts.LibraryId}");
+        req.Headers.Add("AccessKey", opts.ApiKey);
+        using var resp = await http.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
+        string? bunnyKey = null;
+        bool? enableTokenAuth = null;
+        string[]? allowedReferrers = null;
+        bool? enableDirect = null;
+        bool? blockDirectAccess = null;
+
+        if (resp.IsSuccessStatusCode)
+        {
+            var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("EmbedViewTokenSecurityKey", out var k))
+                bunnyKey = k.GetString();
+            if (root.TryGetProperty("EnableTokenAuthentication", out var ta))
+                enableTokenAuth = ta.GetBoolean();
+            if (root.TryGetProperty("AllowedReferrers", out var ar) && ar.ValueKind == JsonValueKind.Array)
+                allowedReferrers = ar.EnumerateArray().Select(x => x.GetString() ?? "").ToArray();
+            if (root.TryGetProperty("EnabledDirectPlay", out var dp))
+                enableDirect = dp.GetBoolean();
+            if (root.TryGetProperty("BlockNoneReferrer", out var bnr))
+                blockDirectAccess = bnr.GetBoolean();
+        }
+
+        var ourKey = opts.EmbedTokenKey ?? "";
+        var bunnyKeyStr = bunnyKey ?? "";
+        var keysMatch = string.Equals(ourKey, bunnyKeyStr, StringComparison.Ordinal);
+
+        // Compute test token with OUR key
+        var testVideoId = "cca7fb9c-5c83-4c7a-9874-a4af28691c26";
+        var testExpires = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        var ourToken = ComputeToken(ourKey, testVideoId, testExpires);
+        var bunnyToken = bunnyKeyStr.Length > 0 ? ComputeToken(bunnyKeyStr, testVideoId, testExpires) : "(no bunny key)";
+
+        return Ok(new
+        {
+            bunnyApiStatus = (int)resp.StatusCode,
+            ourKeyLength = ourKey.Length,
+            ourKeyPreview = ourKey.Length >= 8 ? ourKey[..4] + "..." + ourKey[^4..] : "(short)",
+            bunnyKeyLength = bunnyKeyStr.Length,
+            bunnyKeyPreview = bunnyKeyStr.Length >= 8 ? bunnyKeyStr[..4] + "..." + bunnyKeyStr[^4..] : "(short/empty)",
+            keysMatch,
+            enableTokenAuth,
+            allowedReferrers,
+            enableDirect,
+            blockDirectAccess,
+            testOurToken = ourToken,
+            testBunnyToken = bunnyToken,
+            testUrl = $"https://iframe.mediadelivery.net/embed/{opts.LibraryId}/{testVideoId}?token={bunnyToken}&expires={testExpires}"
+        });
+    }
+
+    private static string ComputeToken(string key, string videoId, long expires)
+    {
+        var raw = key + videoId + expires.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
     }
 
     [HttpGet("/admin/bunny")]
