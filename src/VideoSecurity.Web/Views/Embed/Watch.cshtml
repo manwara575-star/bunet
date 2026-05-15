@@ -11,7 +11,7 @@
     <meta name="referrer" content="no-referrer" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>@videoTitle</title>
-    <link rel="stylesheet" href="/css/player.css?v=secure-webrtc-20260515b" />
+    <link rel="stylesheet" href="/css/player.css?v=secure-webrtc-20260515c" />
     <style>
         html, body {
             margin: 0;
@@ -47,18 +47,20 @@
                     referrerpolicy="strict-origin-when-cross-origin"
                     allow="encrypted-media; autoplay"
                     sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>
-            <video id="player-video"
-                   class="player-video"
-                   hidden
-                   playsinline
-                   controls
-                   controlsList="nodownload noremoteplayback"
-                   disablePictureInPicture></video>
+             <video id="player-video"
+                    class="player-video"
+                    hidden
+                    autoplay
+                    muted
+                    playsinline
+                    controls
+                    controlsList="nodownload noremoteplayback"
+                    disablePictureInPicture></video>
             <div id="player-status" class="player-status" role="status"></div>
             <button type="button" id="btn-fullscreen" class="player-fs-btn" aria-label="Fullscreen">⛶</button>
         </div>
     </div>
-    <script src="/js/player.js?v=secure-webrtc-20260515b"></script>
-    <script src="/js/embed-init.js?v=secure-webrtc-20260515b"></script>
+    <script src="/js/player.js?v=secure-webrtc-20260515c"></script>
+    <script src="/js/embed-init.js?v=secure-webrtc-20260515c"></script>
 </body>
 </html>

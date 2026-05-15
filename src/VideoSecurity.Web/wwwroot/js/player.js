@@ -94,6 +94,10 @@ window.VideoSecurity = window.VideoSecurity || {};
         frame.hidden = true;
         frame.src = 'about:blank';
         video.hidden = false;
+        video.defaultMuted = true;
+        video.muted = true;
+        video.autoplay = true;
+        video.playsInline = true;
 
         const iceServers = (session.securePlayback.iceServers || []).map(url => ({ urls: url }));
         const peer = new RTCPeerConnection({ iceServers });
