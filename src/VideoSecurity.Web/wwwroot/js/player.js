@@ -143,7 +143,7 @@ window.VideoSecurity = window.VideoSecurity || {};
                 await video.play();
                 log('Secure WebRTC playback active.');
             } catch {
-                log('Secure WebRTC ready. Press play to start playback.');
+                log('Secure Demo Ready');
             }
             return peer;
         } catch {
