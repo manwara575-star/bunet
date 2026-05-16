@@ -34,6 +34,7 @@ public interface IProtectedMediaStorage
 public interface ISecureMediaWorker
 {
     Task StartAsync(PlaybackSession session, Video video, CancellationToken ct);
+    Task SeekAsync(PlaybackSession session, Video video, TimeSpan position, CancellationToken ct);
     Task StopAsync(Guid sessionId, CancellationToken ct);
 }
 

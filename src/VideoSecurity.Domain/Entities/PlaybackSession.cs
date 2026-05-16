@@ -10,6 +10,7 @@ public class PlaybackSession
     public DateTimeOffset ExpiresAt { get; set; }
     public long ExpiresAtUtcTicks { get; set; }
     public DateTimeOffset? LastHeartbeatAt { get; set; }
+    public long LastHeartbeatAtUtcTicks { get; set; }
     public string IpHash { get; set; } = string.Empty;
     public string UserAgentHash { get; set; } = string.Empty;
     public int RiskScore { get; set; }

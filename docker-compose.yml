@@ -49,6 +49,12 @@ services:
       SecurePlayback__RtspPublishUrlTemplate: "${SECURE_PLAYBACK_RTSP_PUBLISH_BASE:-rtsp://mediamtx:8554}/{sessionId}"
       SecurePlayback__BurnWatermark: "${SECURE_PLAYBACK_BURN_WATERMARK:-true}"
       SecurePlayback__WatermarkFontSize: "${SECURE_PLAYBACK_WATERMARK_FONT_SIZE:-28}"
+      SecurePlayback__VideoPreset: "${SECURE_PLAYBACK_VIDEO_PRESET:-superfast}"
+      SecurePlayback__VideoMaxRate: "${SECURE_PLAYBACK_VIDEO_MAX_RATE:-2200k}"
+      SecurePlayback__VideoBufferSize: "${SECURE_PLAYBACK_VIDEO_BUFFER_SIZE:-4400k}"
+      SecurePlayback__OutputFrameRate: "${SECURE_PLAYBACK_OUTPUT_FRAME_RATE:-25}"
+      SecurePlayback__AudioBitrate: "${SECURE_PLAYBACK_AUDIO_BITRATE:-96k}"
+      SecurePlayback__StaleSessionTimeout: "${SECURE_PLAYBACK_STALE_SESSION_TIMEOUT:-00:00:45}"
     volumes:
       - videosec-data:/data
     restart: unless-stopped

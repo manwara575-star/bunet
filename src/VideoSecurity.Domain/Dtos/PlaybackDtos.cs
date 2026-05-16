@@ -12,7 +12,10 @@ public sealed record PlaybackSessionResponse(
 public sealed record SecurePlaybackDescriptor(
     string Mode,
     string OfferEndpoint,
-    IReadOnlyList<string> IceServers);
+    IReadOnlyList<string> IceServers,
+    string? SeekEndpoint = null,
+    string? CloseEndpoint = null,
+    double? DurationSeconds = null);
 
 public sealed record SecurePlaybackOfferRequest(
     string Type,
@@ -21,6 +24,17 @@ public sealed record SecurePlaybackOfferRequest(
 public sealed record SecurePlaybackAnswerResponse(
     string Type,
     string Sdp);
+
+public sealed record SecurePlaybackSeekRequest(
+    double PositionSeconds,
+    string? HeartbeatToken = null);
+
+public sealed record SecurePlaybackSeekResponse(
+    double PositionSeconds,
+    string OfferEndpoint);
+
+public sealed record SecurePlaybackCloseRequest(
+    string? HeartbeatToken = null);
 
 public sealed record WatermarkPayload(
     string DisplayText,

@@ -25,7 +25,17 @@ public sealed class FfmpegSecureMediaWorker : ISecureMediaWorker, IDisposable
         _log = log;
     }
 
-    public Task StartAsync(PlaybackSession session, Video video, CancellationToken ct)
+    public Task StartAsync(PlaybackSession session, Video video, CancellationToken ct) =>
+        StartProcessAsync(session, video, TimeSpan.Zero, ct);
+
+    public Task SeekAsync(PlaybackSession session, Video video, TimeSpan position, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        StopProcess(session.Id);
+        return StartProcessAsync(session, video, position, ct);
+    }
+
+    private Task StartProcessAsync(PlaybackSession session, Video video, TimeSpan position, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -57,6 +67,11 @@ public sealed class FfmpegSecureMediaWorker : ISecureMediaWorker, IDisposable
         startInfo.ArgumentList.Add("-loglevel");
         startInfo.ArgumentList.Add("warning");
         startInfo.ArgumentList.Add("-nostdin");
+        if (position > TimeSpan.Zero)
+        {
+            startInfo.ArgumentList.Add("-ss");
+            startInfo.ArgumentList.Add(FormatTimestamp(position));
+        }
         startInfo.ArgumentList.Add("-re");
         startInfo.ArgumentList.Add("-i");
         startInfo.ArgumentList.Add(sourcePath);
@@ -68,7 +83,7 @@ public sealed class FfmpegSecureMediaWorker : ISecureMediaWorker, IDisposable
         startInfo.ArgumentList.Add("-c:v");
         startInfo.ArgumentList.Add("libx264");
         startInfo.ArgumentList.Add("-preset");
-        startInfo.ArgumentList.Add("veryfast");
+        startInfo.ArgumentList.Add(string.IsNullOrWhiteSpace(_options.VideoPreset) ? "superfast" : _options.VideoPreset);
         startInfo.ArgumentList.Add("-tune");
         startInfo.ArgumentList.Add("zerolatency");
         startInfo.ArgumentList.Add("-pix_fmt");
@@ -81,12 +96,36 @@ public sealed class FfmpegSecureMediaWorker : ISecureMediaWorker, IDisposable
         startInfo.ArgumentList.Add("30");
         startInfo.ArgumentList.Add("-bf");
         startInfo.ArgumentList.Add("0");
+        if (_options.OutputFrameRate > 0)
+        {
+            startInfo.ArgumentList.Add("-r");
+            startInfo.ArgumentList.Add(_options.OutputFrameRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (!string.IsNullOrWhiteSpace(_options.VideoMaxRate))
+        {
+            startInfo.ArgumentList.Add("-maxrate");
+            startInfo.ArgumentList.Add(_options.VideoMaxRate);
+        }
+        if (!string.IsNullOrWhiteSpace(_options.VideoBufferSize))
+        {
+            startInfo.ArgumentList.Add("-bufsize");
+            startInfo.ArgumentList.Add(_options.VideoBufferSize);
+        }
         startInfo.ArgumentList.Add("-c:a");
         startInfo.ArgumentList.Add("libopus");
+        if (!string.IsNullOrWhiteSpace(_options.AudioBitrate))
+        {
+            startInfo.ArgumentList.Add("-b:a");
+            startInfo.ArgumentList.Add(_options.AudioBitrate);
+        }
         startInfo.ArgumentList.Add("-ar");
         startInfo.ArgumentList.Add("48000");
         startInfo.ArgumentList.Add("-ac");
         startInfo.ArgumentList.Add("2");
+        startInfo.ArgumentList.Add("-muxdelay");
+        startInfo.ArgumentList.Add("0");
+        startInfo.ArgumentList.Add("-muxpreload");
+        startInfo.ArgumentList.Add("0");
         startInfo.ArgumentList.Add("-f");
         startInfo.ArgumentList.Add("rtsp");
         startInfo.ArgumentList.Add("-rtsp_transport");
@@ -104,7 +143,7 @@ public sealed class FfmpegSecureMediaWorker : ISecureMediaWorker, IDisposable
         }
 
         _ = DrainAsync(process, session.Id);
-        _log.LogInformation("Started secure media worker for session {SessionId}", session.Id);
+        _log.LogInformation("Started secure media worker for session {SessionId} at {PositionSeconds:F1}s", session.Id, position.TotalSeconds);
         return Task.CompletedTask;
     }
 
@@ -112,18 +151,7 @@ public sealed class FfmpegSecureMediaWorker : ISecureMediaWorker, IDisposable
     {
         ct.ThrowIfCancellationRequested();
 
-        if (!_processes.TryRemove(sessionId, out var process))
-            return Task.CompletedTask;
-
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        finally
-        {
-            process.Dispose();
-        }
+        StopProcess(sessionId);
 
         _log.LogInformation("Stopped secure media worker for session {SessionId}", sessionId);
         return Task.CompletedTask;
@@ -133,35 +161,25 @@ public sealed class FfmpegSecureMediaWorker : ISecureMediaWorker, IDisposable
     {
         foreach (var sessionId in _processes.Keys.ToArray())
         {
-            if (_processes.TryRemove(sessionId, out var process))
-            {
-                try
-                {
-                    if (!process.HasExited)
-                        process.Kill(entireProcessTree: true);
-                }
-                finally
-                {
-                    process.Dispose();
-                }
-            }
+            StopProcess(sessionId);
         }
     }
 
-    private async Task DrainAsync(Process process, Guid sessionId)
+    private void StopProcess(Guid sessionId)
     {
+        if (!_processes.TryRemove(sessionId, out var process))
+            return;
+
         try
         {
-            var stderr = await process.StandardError.ReadToEndAsync();
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            _processes.TryRemove(sessionId, out _);
-            if (process.ExitCode != 0)
-                _log.LogWarning("Secure media worker for session {SessionId} exited with {ExitCode}: {Output}", sessionId, process.ExitCode, stderr + stdout);
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
         }
-        catch (Exception ex)
+        catch (ObjectDisposedException)
         {
-            _log.LogWarning(ex, "Secure media worker output drain failed for session {SessionId}", sessionId);
+        }
+        catch (InvalidOperationException)
+        {
         }
         finally
         {
@@ -169,10 +187,42 @@ public sealed class FfmpegSecureMediaWorker : ISecureMediaWorker, IDisposable
         }
     }
 
+    private async Task DrainAsync(Process process, Guid sessionId)
+    {
+        var shouldDispose = false;
+        try
+        {
+            var stderr = await process.StandardError.ReadToEndAsync();
+            var stdout = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            shouldDispose = TryRemoveProcess(sessionId, process);
+            if (process.ExitCode != 0)
+                _log.LogWarning("Secure media worker for session {SessionId} exited with {ExitCode}: {Output}", sessionId, process.ExitCode, stderr + stdout);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Secure media worker output drain failed for session {SessionId}", sessionId);
+        }
+        finally
+        {
+            if (shouldDispose)
+                process.Dispose();
+        }
+    }
+
+    private bool TryRemoveProcess(Guid sessionId, Process process) =>
+        ((ICollection<KeyValuePair<Guid, Process>>)_processes).Remove(new KeyValuePair<Guid, Process>(sessionId, process));
+
     private static string BuildTemplate(string template, PlaybackSession session, Video video) =>
         template
             .Replace("{sessionId}", session.Id.ToString("N"), StringComparison.Ordinal)
             .Replace("{videoId}", video.Id.ToString("N"), StringComparison.Ordinal);
+
+    private static string FormatTimestamp(TimeSpan position) =>
+        position.ToString(@"hh\:mm\:ss\.fff", System.Globalization.CultureInfo.InvariantCulture);
 
     private static string BuildWatermarkFilter(string text, int fontSize)
     {

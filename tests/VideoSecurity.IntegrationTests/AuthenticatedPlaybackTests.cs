@@ -20,6 +20,7 @@ using VideoSecurity.Domain.Dtos;
 using VideoSecurity.Domain.Entities;
 using VideoSecurity.Infrastructure.Persistence;
 using VideoSecurity.Web;
+using VideoSecurity.Web.HostedServices;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
 
@@ -515,6 +516,94 @@ public sealed class AuthenticatedPlaybackTests : IClassFixture<BunnyMockFactory>
     }
 
     [Fact]
+    public async Task SecureWebRtcSeek_RepositionsWorkerWithoutRawUrls()
+    {
+        await using var factory = AuthenticatedFactory(useRecordingWorker: true);
+        var (client, _, session) = await CreateSecureWebRtcSessionAsync(factory);
+        var worker = factory.Services.GetRequiredService<RecordingSecureMediaWorker>();
+
+        var seek = new HttpRequestMessage(HttpMethod.Post, $"/api/secure-playback/{session.SessionId}/seek")
+        {
+            Content = JsonContent.Create(new
+            {
+                positionSeconds = 12.5,
+                heartbeatToken = session.HeartbeatToken
+            })
+        };
+        seek.Headers.Add("X-Playback-Session-Token", session.HeartbeatToken!);
+
+        var seekResp = await client.SendAsync(seek);
+        var body = await seekResp.Content.ReadAsStringAsync();
+        seekResp.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, body);
+        AssertNoDownloadableUrls(body);
+        body.Should().Contain($"/api/secure-playback/{session.SessionId}/offer");
+        worker.SeekRequests.Should().Contain(r =>
+            r.SessionId == session.SessionId &&
+            Math.Abs(r.Position.TotalSeconds - 12.5) < 0.01);
+
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stored = await verifyDb.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+        stored.LastKnownPositionSeconds.Should().BeApproximately(12.5, 0.01);
+        stored.Revoked.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SecureWebRtcClose_RevokesSessionAndStopsWorker()
+    {
+        await using var factory = AuthenticatedFactory(useRecordingWorker: true);
+        var (client, _, session) = await CreateSecureWebRtcSessionAsync(factory);
+        var worker = factory.Services.GetRequiredService<RecordingSecureMediaWorker>();
+
+        var close = new HttpRequestMessage(HttpMethod.Post, $"/api/secure-playback/{session.SessionId}/close")
+        {
+            Content = JsonContent.Create(new { heartbeatToken = session.HeartbeatToken })
+        };
+        close.Headers.Add("X-Playback-Session-Token", session.HeartbeatToken!);
+
+        var closeResp = await client.SendAsync(close);
+        closeResp.StatusCode.Should().Be(System.Net.HttpStatusCode.NoContent);
+        worker.StoppedSessions.Should().Contain(session.SessionId);
+
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stored = await verifyDb.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+        stored.Revoked.Should().BeTrue();
+        stored.RevocationReason.Should().Be("ClientClosed");
+    }
+
+    [Fact]
+    public async Task SecureWebRtcStaleHeartbeatCleanup_RevokesSessionAndStopsWorker()
+    {
+        await using var factory = AuthenticatedFactory(useRecordingWorker: true);
+        var (_, _, session) = await CreateSecureWebRtcSessionAsync(factory);
+        var worker = factory.Services.GetRequiredService<RecordingSecureMediaWorker>();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+            stored.CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+            stored.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10);
+            stored.LastHeartbeatAt = null;
+            await db.SaveChangesAsync();
+        }
+
+        var cleanup = new ExpiredSessionCleanupService(
+            factory.Services,
+            factory.Services.GetRequiredService<ILogger<ExpiredSessionCleanupService>>());
+        await cleanup.RunOnceAsync(CancellationToken.None);
+
+        worker.StoppedSessions.Should().Contain(session.SessionId);
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var verified = await verifyDb.PlaybackSessions.SingleAsync(s => s.Id == session.SessionId);
+        verified.Revoked.Should().BeTrue();
+        verified.RevocationReason.Should().Be("stale-heartbeat");
+        verified.RevokedAt.Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task ActiveGrant_AllowsMeCatalogPlayerAndPlaybackSession_UnderSqlite()
     {
         await using var factory = AuthenticatedFactory();
@@ -614,7 +703,8 @@ public sealed class AuthenticatedPlaybackTests : IClassFixture<BunnyMockFactory>
                 ["SecurePlayback:Enabled"] = configureSecurePlayback ? "true" : "false",
                 ["SecurePlayback:WhepEndpointTemplate"] = configureSecurePlayback ? $"{_f.Bunny.Url}/whep/{{sessionId}}" : "",
                 ["SecurePlayback:StartFfmpegOnSessionCreate"] = "false",
-                ["SecurePlayback:BurnWatermark"] = "true"
+                ["SecurePlayback:BurnWatermark"] = "true",
+                ["SecurePlayback:StaleSessionTimeout"] = "00:00:05"
             });
         });
         builder.ConfigureTestServices(services =>
@@ -717,10 +807,17 @@ public sealed class RecordingSecureMediaWorker : ISecureMediaWorker
 {
     public ConcurrentBag<Guid> StartedSessions { get; } = [];
     public ConcurrentBag<Guid> StoppedSessions { get; } = [];
+    public ConcurrentBag<SeekRecord> SeekRequests { get; } = [];
 
     public Task StartAsync(PlaybackSession session, Video video, CancellationToken ct)
     {
         StartedSessions.Add(session.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task SeekAsync(PlaybackSession session, Video video, TimeSpan position, CancellationToken ct)
+    {
+        SeekRequests.Add(new SeekRecord(session.Id, position));
         return Task.CompletedTask;
     }
 
@@ -730,6 +827,8 @@ public sealed class RecordingSecureMediaWorker : ISecureMediaWorker
         return Task.CompletedTask;
     }
 }
+
+public sealed record SeekRecord(Guid SessionId, TimeSpan Position);
 
 public sealed class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {

@@ -194,7 +194,10 @@ public sealed class PlaybackSessionService : IPlaybackSessionService
             var secure = new SecurePlaybackDescriptor(
                 "webrtc",
                 $"/api/secure-playback/{session.Id}/offer",
-                _securePlayback.IceServers);
+                _securePlayback.IceServers,
+                $"/api/secure-playback/{session.Id}/seek",
+                $"/api/secure-playback/{session.Id}/close",
+                video.DurationSeconds > 0 ? video.DurationSeconds : null);
 
             return new PlaybackSessionResponse(
                 session.Id,

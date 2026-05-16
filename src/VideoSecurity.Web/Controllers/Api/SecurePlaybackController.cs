@@ -22,17 +22,20 @@ public sealed class SecurePlaybackController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IProtectedMediaStorage _storage;
+    private readonly ISecureMediaWorker _worker;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SecurePlaybackOptions _options;
 
     public SecurePlaybackController(
         AppDbContext db,
         IProtectedMediaStorage storage,
+        ISecureMediaWorker worker,
         IHttpClientFactory httpClientFactory,
         IOptions<SecurePlaybackOptions> options)
     {
         _db = db;
         _storage = storage;
+        _worker = worker;
         _httpClientFactory = httpClientFactory;
         _options = options.Value;
     }
@@ -55,44 +58,14 @@ public sealed class SecurePlaybackController : ControllerBase
             return BadRequest(new { error = "A WebRTC SDP offer is required." });
         }
 
-        var session = await _db.PlaybackSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
-        if (session is null) return NotFound();
-
-        if (!IsPublicPlaybackSession(session.UserId))
-        {
-            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId)) return Unauthorized();
-            if (session.UserId != userId) return Forbid();
-        }
-
-        if (session.Revoked) return Conflict(new { error = "Session revoked." });
-        if (DateTimeOffset.UtcNow > session.ExpiresAt) return Conflict(new { error = "Session expired." });
-
-        if (!TokenMatches(Request.Headers["X-Playback-Session-Token"].ToString(), session.HeartbeatTokenHash))
-            return Forbid();
-
-        var video = await _db.Videos.AsNoTracking().FirstOrDefaultAsync(v => v.Id == session.VideoId, ct);
-        if (video is null) return NotFound();
-        if (video.PlaybackProvider != PlaybackProvider.SecureWebRtc)
-            return Conflict(new { error = "This session is not a Secure WebRTC session." });
-
-        if (string.IsNullOrWhiteSpace(video.ProtectedSourcePath))
-        {
-            return Conflict(new { error = "Protected source media is not available." });
-        }
-
-        bool sourceExists;
-        try
-        {
-            sourceExists = await _storage.ExistsAsync(video.ProtectedSourcePath, ct);
-        }
-        catch (InvalidOperationException)
-        {
-            return Conflict(new { error = "Protected source media is invalid." });
-        }
-
-        if (!sourceExists)
-            return Conflict(new { error = "Protected source media is not available." });
+        var validation = await ValidateSessionAsync(
+            sessionId,
+            Request.Headers["X-Playback-Session-Token"].ToString(),
+            requireSource: true,
+            ct);
+        if (validation.Error is not null) return validation.Error;
+        var session = validation.Session!;
+        var video = validation.Video!;
 
         if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.WhepEndpointTemplate))
         {
@@ -150,6 +123,121 @@ public sealed class SecurePlaybackController : ControllerBase
         return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Secure WebRTC worker rejected the offer." });
     }
 
+    [HttpPost("{sessionId:guid}/seek")]
+    [EnableRateLimiting("secure-playback")]
+    [RequestSizeLimit(8 * 1024)]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<ActionResult<SecurePlaybackSeekResponse>> Seek(
+        Guid sessionId,
+        [FromBody] SecurePlaybackSeekRequest request,
+        CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers.Pragma = "no-cache";
+
+        var validation = await ValidateSessionAsync(
+            sessionId,
+            Request.Headers["X-Playback-Session-Token"].ToStringOrFallback(request.HeartbeatToken),
+            requireSource: true,
+            ct);
+        if (validation.Error is not null) return validation.Error;
+
+        var session = validation.Session!;
+        var video = validation.Video!;
+        var duration = video.DurationSeconds > 0 ? video.DurationSeconds : double.PositiveInfinity;
+        var position = Math.Clamp(
+            double.IsFinite(request.PositionSeconds) ? request.PositionSeconds : 0,
+            0,
+            double.IsPositiveInfinity(duration) ? double.MaxValue : Math.Max(0, duration - 1));
+
+        await _worker.SeekAsync(session, video, TimeSpan.FromSeconds(position), ct);
+        session.LastKnownPositionSeconds = position;
+        session.LastHeartbeatAt = DateTimeOffset.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new SecurePlaybackSeekResponse(position, $"/api/secure-playback/{session.Id}/offer"));
+    }
+
+    [HttpPost("{sessionId:guid}/close")]
+    [EnableRateLimiting("secure-playback")]
+    [RequestSizeLimit(8 * 1024)]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> Close(
+        Guid sessionId,
+        [FromBody] SecurePlaybackCloseRequest? request,
+        CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers.Pragma = "no-cache";
+
+        var validation = await ValidateSessionAsync(
+            sessionId,
+            Request.Headers["X-Playback-Session-Token"].ToStringOrFallback(request?.HeartbeatToken),
+            requireSource: false,
+            ct);
+        if (validation.Error is not null) return validation.Error;
+
+        var session = validation.Session!;
+        if (!session.Revoked)
+        {
+            session.Revoked = true;
+            session.RevokedAt = DateTimeOffset.UtcNow;
+            session.RevocationReason = "ClientClosed";
+            await _worker.StopAsync(session.Id, ct);
+            await _db.SaveChangesAsync(ct);
+        }
+
+        return NoContent();
+    }
+
+    private async Task<ValidatedSecureSession> ValidateSessionAsync(
+        Guid sessionId,
+        string? playbackToken,
+        bool requireSource,
+        CancellationToken ct)
+    {
+        var session = await _db.PlaybackSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (session is null) return new(null, null, NotFound());
+
+        if (!IsPublicPlaybackSession(session.UserId))
+        {
+            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId)) return new(null, null, Unauthorized());
+            if (session.UserId != userId) return new(null, null, Forbid());
+        }
+
+        if (session.Revoked) return new(null, null, Conflict(new { error = "Session revoked." }));
+        if (DateTimeOffset.UtcNow > session.ExpiresAt) return new(null, null, Conflict(new { error = "Session expired." }));
+
+        if (!TokenMatches(playbackToken, session.HeartbeatTokenHash))
+            return new(null, null, Forbid());
+
+        var video = await _db.Videos.FirstOrDefaultAsync(v => v.Id == session.VideoId, ct);
+        if (video is null) return new(null, null, NotFound());
+        if (video.PlaybackProvider != PlaybackProvider.SecureWebRtc)
+            return new(null, null, Conflict(new { error = "This session is not a Secure WebRTC session." }));
+
+        if (!requireSource)
+            return new(session, video, null);
+
+        if (string.IsNullOrWhiteSpace(video.ProtectedSourcePath))
+            return new(null, null, Conflict(new { error = "Protected source media is not available." }));
+
+        bool sourceExists;
+        try
+        {
+            sourceExists = await _storage.ExistsAsync(video.ProtectedSourcePath, ct);
+        }
+        catch (InvalidOperationException)
+        {
+            return new(null, null, Conflict(new { error = "Protected source media is invalid." }));
+        }
+
+        return sourceExists
+            ? new(session, video, null)
+            : new(null, null, Conflict(new { error = "Protected source media is not available." }));
+    }
+
     private static bool TryBuildEndpoint(string template, PlaybackSession session, Video video, out Uri endpoint)
     {
         var url = template
@@ -186,5 +274,16 @@ public sealed class SecurePlaybackController : ControllerBase
         return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(suppliedHash),
             Encoding.UTF8.GetBytes(expectedHash));
+    }
+
+    private sealed record ValidatedSecureSession(PlaybackSession? Session, Video? Video, ActionResult? Error);
+}
+
+internal static class HeaderStringExtensions
+{
+    public static string? ToStringOrFallback(this Microsoft.Extensions.Primitives.StringValues header, string? fallback)
+    {
+        var value = header.ToString();
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 }

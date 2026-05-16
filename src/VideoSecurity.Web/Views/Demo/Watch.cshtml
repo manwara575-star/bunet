@@ -13,7 +13,7 @@
     <title>Secure Demo</title>
     <meta property="og:title" content="Secure Demo" />
     <meta name="twitter:title" content="Secure Demo" />
-    <link rel="stylesheet" href="/css/player.css?v=secure-webrtc-20260515d" />
+    <link rel="stylesheet" href="/css/player.css?v=secure-webrtc-20260516a" />
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         html, body {
@@ -116,9 +116,14 @@
                             autoplay
                             muted
                             playsinline
-                            controls
                             controlsList="nodownload noremoteplayback"
                             disablePictureInPicture></video>
+                    <div id="secure-controls" class="secure-controls" hidden>
+                        <button type="button" id="btn-seek-back" class="secure-control-btn">-10s</button>
+                        <button type="button" id="btn-play-toggle" class="secure-control-btn">Pause</button>
+                        <button type="button" id="btn-seek-forward" class="secure-control-btn">+10s</button>
+                        <button type="button" id="btn-mute-toggle" class="secure-control-btn">Unmute</button>
+                    </div>
                     <div id="player-status" class="player-status" role="status"></div>
                     <button type="button" id="btn-fullscreen" class="player-fs-btn" aria-label="Fullscreen">⛶</button>
                 </div>
@@ -137,7 +142,7 @@
         </div>
     </div>
 
-    <script src="/js/player.js?v=secure-webrtc-20260515d"></script>
-    <script src="/js/embed-init.js?v=secure-webrtc-20260515d"></script>
+    <script src="/js/player.js?v=secure-webrtc-20260516a"></script>
+    <script src="/js/embed-init.js?v=secure-webrtc-20260516a"></script>
 </body>
 </html>

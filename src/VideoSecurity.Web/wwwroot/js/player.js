@@ -79,7 +79,23 @@ window.VideoSecurity = window.VideoSecurity || {};
         });
     }
 
-    async function startSecureWebRtc(session, opts, log) {
+    async function postSecureJson(endpoint, session, body) {
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Playback-Session-Token': session.heartbeatToken || ''
+        };
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            credentials: 'same-origin',
+            body: JSON.stringify(Object.assign({ heartbeatToken: session.heartbeatToken || null }, body || {}))
+        });
+        const text = await resp.text();
+        if (!resp.ok) throw new Error(text || `Secure playback request failed (${resp.status}).`);
+        return text ? JSON.parse(text) : null;
+    }
+
+    async function startSecureWebRtc(session, opts, log, basePositionSeconds) {
         const video = document.getElementById('player-video');
         const frame = document.getElementById('player-frame');
         if (!session.securePlayback || !session.securePlayback.offerEndpoint) {
@@ -98,6 +114,7 @@ window.VideoSecurity = window.VideoSecurity || {};
         video.muted = true;
         video.autoplay = true;
         video.playsInline = true;
+        video.controls = false;
 
         const iceServers = (session.securePlayback.iceServers || []).map(url => ({ urls: url }));
         const peer = new RTCPeerConnection({ iceServers });
@@ -149,7 +166,11 @@ window.VideoSecurity = window.VideoSecurity || {};
             } catch {
                 log('Secure Demo Ready');
             }
-            return peer;
+            return {
+                peer,
+                basePositionSeconds: Math.max(0, Number(basePositionSeconds) || 0),
+                mediaStartSeconds: video.currentTime || 0
+            };
         } catch {
             peer.close();
             video.srcObject = null;
@@ -372,6 +393,11 @@ window.VideoSecurity = window.VideoSecurity || {};
         const video = document.getElementById('player-video');
         const status = document.getElementById('player-status');
         const fsBtn = document.getElementById('btn-fullscreen');
+        const secureControls = document.getElementById('secure-controls');
+        const playToggle = document.getElementById('btn-play-toggle');
+        const muteToggle = document.getElementById('btn-mute-toggle');
+        const seekBack = document.getElementById('btn-seek-back');
+        const seekForward = document.getElementById('btn-seek-forward');
 
         function log(msg, kind) {
             status.textContent = msg;
@@ -408,12 +434,13 @@ window.VideoSecurity = window.VideoSecurity || {};
         // Install the tamper guard (MutationObserver + sweep + self-healing).
         const guard = installTamperGuard(shell, safeDisplay, gridText, opts, session.sessionId);
 
-        let securePeer = null;
+        let secureState = null;
         const provider = session.playbackProvider || (session.embedUrl ? 'BunnyStream' : '');
         if (provider === 'SecureWebRtc') {
             try {
-                securePeer = await startSecureWebRtc(session, opts, log);
-                if (!securePeer) return;
+                secureState = await startSecureWebRtc(session, opts, log, session.lastKnownPositionSeconds || 0);
+                if (!secureState) return;
+                setupSecureControls();
             } catch {
                 log('Secure playback failed. Try refreshing the page.', 'error');
                 return;
@@ -424,20 +451,92 @@ window.VideoSecurity = window.VideoSecurity || {};
             frame.src = session.embedUrl;
         }
 
+        function currentSecurePositionSeconds() {
+            if (!secureState) return 0;
+            return Math.max(0, secureState.basePositionSeconds + ((video.currentTime || 0) - secureState.mediaStartSeconds));
+        }
+
+        function setSecureButtonsDisabled(disabled) {
+            for (const button of [playToggle, muteToggle, seekBack, seekForward]) {
+                if (button) button.disabled = disabled;
+            }
+        }
+
+        function updateSecureButtons() {
+            if (playToggle) playToggle.textContent = video.paused ? 'Play' : 'Pause';
+            if (muteToggle) muteToggle.textContent = video.muted ? 'Unmute' : 'Mute';
+        }
+
+        async function reconnectSecureAt(positionSeconds) {
+            if (!session.securePlayback?.seekEndpoint) {
+                log('Secure seek is not available.', 'error');
+                return;
+            }
+
+            setSecureButtonsDisabled(true);
+            log('Seeking...');
+            try {
+                const requested = Math.max(0, positionSeconds);
+                const result = await postSecureJson(session.securePlayback.seekEndpoint, session, {
+                    positionSeconds: requested
+                });
+                if (secureState?.peer) secureState.peer.close();
+                video.srcObject = null;
+                secureState = await startSecureWebRtc(session, opts, log, result?.positionSeconds ?? requested);
+                updateSecureButtons();
+            } catch {
+                log('Secure seek failed. Try refreshing the page.', 'error');
+            } finally {
+                setSecureButtonsDisabled(false);
+            }
+        }
+
+        function setupSecureControls() {
+            if (!secureControls) return;
+            secureControls.hidden = false;
+            updateSecureButtons();
+
+            playToggle?.addEventListener('click', async () => {
+                if (video.paused) {
+                    try { await video.play(); } catch { log('Secure Demo Ready'); }
+                } else {
+                    video.pause();
+                }
+                updateSecureButtons();
+            });
+
+            muteToggle?.addEventListener('click', () => {
+                video.muted = !video.muted;
+                updateSecureButtons();
+            });
+
+            seekBack?.addEventListener('click', () => {
+                reconnectSecureAt(currentSecurePositionSeconds() - 10);
+            });
+
+            seekForward?.addEventListener('click', () => {
+                reconnectSecureAt(currentSecurePositionSeconds() + 10);
+            });
+
+            video.addEventListener('play', updateSecureButtons);
+            video.addEventListener('pause', updateSecureButtons);
+            video.addEventListener('volumechange', updateSecureButtons);
+        }
+
         // Heartbeats every 15s with visibility/focus/watermark/fullscreen state.
         const HB_MS = 15000;
         let lastPos = 0;
         const hbTimer = setInterval(() => {
             postEvent(opts.heartbeatEndpoint, {
                 sessionId: session.sessionId,
-                positionSeconds: lastPos,
+                positionSeconds: secureState ? currentSecurePositionSeconds() : lastPos,
                 documentVisible: !document.hidden,
                 documentFocused: document.hasFocus(),
                 watermarkVisible: guard.isVisible(),
                 fullscreen: !!document.fullscreenElement,
                 heartbeatToken: session.heartbeatToken || null
             }, opts.antiForgery);
-            lastPos += HB_MS / 1000;
+            if (!secureState) lastPos += HB_MS / 1000;
         }, HB_MS);
 
         // App-level fullscreen on the SHELL (which contains watermark + grid + iframe), so
@@ -485,7 +584,19 @@ window.VideoSecurity = window.VideoSecurity || {};
         window.addEventListener('beforeunload', () => {
             clearInterval(hbTimer);
             guard.stop();
-            if (securePeer) securePeer.close();
+            if (secureState?.peer) secureState.peer.close();
+            if (session.securePlayback?.closeEndpoint) {
+                fetch(session.securePlayback.closeEndpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Playback-Session-Token': session.heartbeatToken || ''
+                    },
+                    credentials: 'same-origin',
+                    keepalive: true,
+                    body: JSON.stringify({ heartbeatToken: session.heartbeatToken || null })
+                }).catch(() => { });
+            }
             postEvent(opts.eventsEndpoint, { sessionId: session.sessionId, videoId: opts.videoId, type: 'Other', metadata: 'unload' });
         });
     };

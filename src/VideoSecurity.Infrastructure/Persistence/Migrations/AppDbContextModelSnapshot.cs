@@ -345,6 +345,9 @@ namespace VideoSecurity.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastHeartbeatAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("LastHeartbeatAtUtcTicks")
+                        .HasColumnType("INTEGER");
+
                     b.Property<double>("LastKnownPositionSeconds")
                         .HasColumnType("REAL");
 
@@ -391,6 +394,8 @@ namespace VideoSecurity.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ExpiresAtUtcTicks");
 
+                    b.HasIndex("LastHeartbeatAtUtcTicks");
+
                     b.HasIndex("UserId");
 
                     b.HasIndex("VideoId");
@@ -398,6 +403,8 @@ namespace VideoSecurity.Infrastructure.Persistence.Migrations
                     b.HasIndex("Revoked", "ExpiresAt");
 
                     b.HasIndex("Revoked", "ExpiresAtUtcTicks");
+
+                    b.HasIndex("Revoked", "LastHeartbeatAtUtcTicks");
 
                     b.HasIndex("UserId", "VideoId");
 

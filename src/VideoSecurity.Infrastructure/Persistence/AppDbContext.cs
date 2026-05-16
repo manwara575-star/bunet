@@ -67,9 +67,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(x => x.VideoId);
             e.HasIndex(x => x.ExpiresAt);
             e.HasIndex(x => x.ExpiresAtUtcTicks);
+            e.HasIndex(x => x.LastHeartbeatAtUtcTicks);
             e.HasIndex(x => new { x.UserId, x.VideoId });
             e.HasIndex(x => new { x.Revoked, x.ExpiresAt });
             e.HasIndex(x => new { x.Revoked, x.ExpiresAtUtcTicks });
+            e.HasIndex(x => new { x.Revoked, x.LastHeartbeatAtUtcTicks });
             e.Property(x => x.UserId).HasMaxLength(450).IsRequired();
             e.Property(x => x.IpHash).HasMaxLength(128).IsRequired();
             e.Property(x => x.UserAgentHash).HasMaxLength(128).IsRequired();
@@ -161,6 +163,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entry.Entity.CreatedAtUtcTicks = entry.Entity.CreatedAt.UtcDateTime.Ticks;
             entry.Entity.ExpiresAtUtcTicks = entry.Entity.ExpiresAt.UtcDateTime.Ticks;
+            entry.Entity.LastHeartbeatAtUtcTicks = entry.Entity.LastHeartbeatAt?.UtcDateTime.Ticks ?? 0;
         }
 
         foreach (var entry in ChangeTracker.Entries<AuditLog>()

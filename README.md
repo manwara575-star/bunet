@@ -120,6 +120,8 @@ Visit:
 | GET | `/api/me/progress/{videoId}` | User | Read current progress for a video |
 | POST | `/api/videos/{id}/playback-session` | User | Returns `{sessionId, embedUrl, expiresAt, watermark}` |
 | POST | `/api/secure-playback/{sessionId}/offer` | User | Validates session and proxies a WebRTC/WHEP SDP offer to the configured worker |
+| POST | `/api/secure-playback/{sessionId}/seek` | User | Token-bound Secure WebRTC seek; repositions the private FFmpeg worker without exposing media URLs |
+| POST | `/api/secure-playback/{sessionId}/close` | User | Token-bound Secure WebRTC cleanup; revokes the session and stops its worker |
 | POST | `/api/videos/heartbeat` | User | Updates session + progress + risk score |
 | POST | `/api/security/video-events` | Anon | Records best-effort security telemetry |
 | POST | `/api/webhooks/bunny/stream` | Bunny signature/secret | Updates local video status |
@@ -195,6 +197,11 @@ consumed by `docker-compose.yml` (or the equivalent secret store on your platfor
 | `SecurePlayback__StartFfmpegOnSessionCreate` | recommended | Compose default is `true`; starts one FFmpeg publisher per secure session. |
 | `SecurePlayback__RtspPublishUrlTemplate` | yes when FFmpeg start is enabled | RTSP publish URL, e.g. `rtsp://mediamtx:8554/{sessionId}`. |
 | `SecurePlayback__BurnWatermark` | yes for Secure WebRTC | Must stay `true`; the app rejects Secure WebRTC sessions if burned watermarking is disabled. |
+| `SecurePlayback__VideoPreset` | optional | FFmpeg x264 preset for secure workers; Compose defaults to `superfast` for lower latency. |
+| `SecurePlayback__VideoMaxRate` / `SecurePlayback__VideoBufferSize` | optional | Secure worker bitrate cap and VBV buffer; Compose defaults to `2200k` / `4400k`. |
+| `SecurePlayback__OutputFrameRate` | optional | Secure worker output frame rate; Compose defaults to `25`. |
+| `SecurePlayback__AudioBitrate` | optional | Secure worker Opus audio bitrate; Compose defaults to `96k`. |
+| `SecurePlayback__StaleSessionTimeout` | optional | Time without heartbeat before secure workers are revoked; Compose defaults to `00:00:45`. |
 | `MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS` | yes outside local Docker | Browser-reachable hostname/IP advertised in MediaMTX WebRTC ICE candidates. |
 | `MEDIAMTX_WEBRTC_UDP_PORT` | yes for Secure WebRTC | Public UDP port for WebRTC media; default `8189/udp`. |
 | `Hosting__DisableHttpsRedirection` | situational | `true` only when TLS terminates at a proxy that forwards `X-Forwarded-Proto=https`. |

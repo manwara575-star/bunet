@@ -23,4 +23,16 @@ public sealed class SecurePlaybackOptions
     public bool BurnWatermark { get; set; } = true;
 
     public int WatermarkFontSize { get; set; } = 28;
+
+    public string VideoPreset { get; set; } = "superfast";
+
+    public string VideoMaxRate { get; set; } = "2200k";
+
+    public string VideoBufferSize { get; set; } = "4400k";
+
+    public int OutputFrameRate { get; set; } = 25;
+
+    public string AudioBitrate { get; set; } = "96k";
+
+    public TimeSpan StaleSessionTimeout { get; set; } = TimeSpan.FromSeconds(45);
 }
